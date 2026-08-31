@@ -60,6 +60,21 @@ def make_axis_value(primary, base_stack=None, default_model=1.0, default_clip=1.
                            default_model, default_clip, base_stack)
 
 
+def make_stack_sweep(target_name, base_stack, values):
+    """只扫描连接栈内已有 LoRA；强度同时作用于 model 和 clip。"""
+    target_key = str(target_name).replace("/", "\\").casefold()
+    target = next(
+        (item for item in (base_stack or [])
+         if item and str(item[0]).replace("/", "\\").casefold() == target_key),
+        None,
+    )
+    if target is None:
+        raise ValueError(f"Target LoRA is not enabled in the connected stack: {target_name}")
+
+    return [make_axis_value((target[0], value, value), base_stack, target[1], target[2])
+            for value in values]
+
+
 def merge_partial_stack(partial_stack, base_stack=None):
     """逐项合并 XY 轴栈，支持 model/clip 单字段变化并保留另一轴结果。"""
     if isinstance(partial_stack, XYLoraAxisValue):

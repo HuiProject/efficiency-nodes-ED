@@ -1,6 +1,6 @@
 import unittest
 
-from xy_lora_compat import make_axis_value, merge_partial_stack, merge_stack
+from xy_lora_compat import make_axis_value, make_stack_sweep, merge_partial_stack, merge_stack
 
 
 class XYLoraCompatibilityTests(unittest.TestCase):
@@ -33,6 +33,21 @@ class XYLoraCompatibilityTests(unittest.TestCase):
         actual = merge_stack((self.target, 1.0, 1.0), base)
         self.assertEqual((self.target, 1.0, 1.0), actual[0])
         self.assertEqual(1, sum(name == self.target for name, _, _ in actual))
+
+    def test_connected_stack_sweep_matches_manual_strength_changes(self):
+        base = [(self.target, 0.6, 0.6), *self.base_stack]
+        sweep = make_stack_sweep(self.target, base, [0.0, 0.5, 1.0])
+        resolved = [merge_partial_stack(value) for value in sweep]
+        expected = [
+            [(self.target, 0.0, 0.0), *self.base_stack],
+            [(self.target, 0.5, 0.5), *self.base_stack],
+            [(self.target, 1.0, 1.0), *self.base_stack],
+        ]
+        self.assertEqual(expected, resolved)
+
+    def test_connected_stack_sweep_rejects_unlisted_target(self):
+        with self.assertRaisesRegex(ValueError, "not enabled in the connected stack"):
+            make_stack_sweep(self.target, self.base_stack, [0.5])
 
 
 if __name__ == "__main__":
