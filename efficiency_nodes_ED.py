@@ -176,15 +176,17 @@ class ED_Util:
 
             lora_name, strength_model, strength_clip = lora_params[0]
             
-            if os.path.isabs(lora_name):
-                lora_path = lora_name
-            else:
-                lora_path = folder_paths.get_full_path("loras", lora_name)
-            
             lora_count += 1
             lora_model_info = f"{os.path.splitext(os.path.basename(lora_name))[0]}({round(strength_model, 2)},{round(strength_clip, 2)})"
             print(f"  [{lora_count}] lora(mod,clip): {lora_model_info}")
-            lora_model, lora_clip = comfy.sd.load_lora_for_models(ckpt, clip, comfy.utils.load_torch_file(lora_path), strength_model, strength_clip)
+            if not os.path.isabs(lora_name):
+                lora_model, lora_clip = nodes.LoraLoader().load_lora(
+                    ckpt, clip, lora_name, strength_model, strength_clip)
+            else:
+                lora, metadata = comfy.utils.load_torch_file(
+                    lora_name, safe_load=True, return_metadata=True)
+                lora_model, lora_clip = comfy.sd.load_lora_for_models(
+                    ckpt, clip, lora, strength_model, strength_clip, lora_metadata=metadata)
 
             # Call the function again with the new lora_model and lora_clip and the remaining tuples
             return recursive_load_lora(lora_params[1:], lora_model, lora_clip, folder_paths, lora_count)

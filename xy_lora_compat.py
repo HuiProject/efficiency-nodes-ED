@@ -44,8 +44,9 @@ def merge_stack(primary, base_stack=None):
             continue
         result.append(normalize_entry(item[0], item[1], item[2]))
     if not replaced:
-        result.append((first[0], 1.0 if first[1] is None else first[1],
-                       1.0 if first[2] is None else first[2]))
+        # 与 LoRA Stacker 一致：本节点选择的 LoRA 位于输入基础栈之前。
+        result.insert(0, (first[0], 1.0 if first[1] is None else first[1],
+                          1.0 if first[2] is None else first[2]))
     return result
 
 
