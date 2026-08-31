@@ -507,7 +507,8 @@ class LoRA_Stacker_ED:
         names = ["None"] + folder_paths.get_filename_list("loras")
 
         if kwargs['lora_count'] > 0:
-            for i in range(1, cls.MAX_LORA_COUNT +1):                
+            # 【兼容动态数量】只校验当前启用数量，隐藏槽位中的旧文件名不应阻止执行。
+            for i in range(1, kwargs['lora_count'] + 1):
                 name = kwargs[f"lora_name_{i}"]
                 if not name in names:
                     return_value = f"Lora not found: {name}"
@@ -2760,6 +2761,67 @@ SUPIR Tiles -node for preview to understand how the image is tiled.
 # NODE MAPPING
 ##############################################################################################################
 
+# Power Lora Loader 的 ED 兼容副本：保留原 MODEL/CLIP 行为并额外导出标准 LORA_STACK。
+_POWER_LORA_BASE = NODES.get("Power Lora Loader (rgthree)")
+class _FlexibleLoraInputs(dict):
+    """允许前端动态提交 lora_1、lora_2 等 Power Loader 参数。"""
+    def __getitem__(self, key):
+        return dict.__getitem__(self, key) if dict.__contains__(self, key) else ("*",)
+    def __contains__(self, key):
+        return True
+
+if _POWER_LORA_BASE is not None:
+    class PowerLoraLoaderStackED(_POWER_LORA_BASE):
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "MODEL", "CLIP")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "BASE_MODEL", "BASE_CLIP")
+        CATEGORY = "Efficiency Nodes/Loaders"
+
+        def load_loras(self, model=None, clip=None, **kwargs):
+            base_model, base_clip = model, clip
+            result = super().load_loras(model=model, clip=clip, **kwargs)
+            stack = []
+            for key, value in kwargs.items():
+                if not key.upper().startswith("LORA_") or not isinstance(value, dict):
+                    continue
+                if not value.get("on") or not value.get("lora"):
+                    continue
+                model_strength = float(value.get("strength", 0.0))
+                clip_strength = value.get("strengthTwo", model_strength)
+                clip_strength = model_strength if clip_strength is None else float(clip_strength)
+                if model_strength == 0 and clip_strength == 0:
+                    continue
+                stack.append((value["lora"], model_strength, clip_strength))
+            return (*result, stack, base_model, base_clip)
+else:
+    class PowerLoraLoaderStackED:
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "MODEL", "CLIP")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "BASE_MODEL", "BASE_CLIP")
+        CATEGORY = "Efficiency Nodes/Loaders"
+        FUNCTION = "load_loras"
+
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {"required": {}, "optional": _FlexibleLoraInputs({"model": ("MODEL",), "clip": ("CLIP",)})}
+
+        def load_loras(self, model=None, clip=None, **kwargs):
+            base_model, base_clip = model, clip
+            stack = []
+            for key, value in kwargs.items():
+                if not key.upper().startswith("LORA_") or not isinstance(value, dict) or not value.get("on"):
+                    continue
+                name = value.get("lora")
+                if not name:
+                    continue
+                sm = float(value.get("strength", 0.0))
+                sc = value.get("strengthTwo", sm)
+                sc = sm if sc is None else float(sc)
+                if sm == 0 and sc == 0:
+                    continue
+                path = folder_paths.get_full_path("loras", name)
+                model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
+                stack.append((name, sm, sc))
+            return (model, clip, stack, base_model, base_clip)
+
 NODE_CLASS_MAPPINGS = {
     #ED
     "Efficient Loader 💬ED": EfficientLoader_ED,
@@ -2790,6 +2852,9 @@ NODE_CLASS_MAPPINGS = {
     "SUPIR Model Loader 💬ED": SUPIR_Model_Loader_ED,
     "SUPIR Sampler 💬ED": SUPIR_Sampler_ED,
 }
+
+if PowerLoraLoaderStackED is not None:
+    NODE_CLASS_MAPPINGS["Power Lora Loader 💬ED (LORA_STACK)"] = PowerLoraLoaderStackED
 
 
 
