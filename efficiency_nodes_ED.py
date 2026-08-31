@@ -2781,6 +2781,17 @@ if _POWER_LORA_BASE is not None:
         def load_loras(self, model=None, clip=None, **kwargs):
             base_model, base_clip = model, clip
             result = super().load_loras(model=model, clip=clip, **kwargs)
+            # [XY-DEBUG] 保留同一加载器的未套 LoRA 基础对象，供 XY 网格逐格重建。
+            # 普通流程继续使用 result 中已套用 LoRA 的 MODEL/CLIP，不改变既有行为。
+            loaded_model, loaded_clip = result[0], result[1]
+            try:
+                setattr(loaded_model, "_xy_base_model", base_model)
+            except Exception:
+                pass
+            try:
+                setattr(loaded_clip, "_xy_base_clip", base_clip)
+            except Exception:
+                pass
             stack = []
             for key, value in kwargs.items():
                 if not key.upper().startswith("LORA_") or not isinstance(value, dict):
@@ -2794,7 +2805,7 @@ if _POWER_LORA_BASE is not None:
                     continue
                 stack.append((value["lora"], model_strength, clip_strength))
             print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
-            return (*result, stack)
+            return (loaded_model, loaded_clip, stack)
 else:
     class PowerLoraLoaderStackED:
         RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
@@ -2824,6 +2835,14 @@ else:
                 model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
                 stack.append((name, sm, sc))
             print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
+            try:
+                setattr(model, "_xy_base_model", base_model)
+            except Exception:
+                pass
+            try:
+                setattr(clip, "_xy_base_clip", base_clip)
+            except Exception:
+                pass
             return (model, clip, stack)
 
 NODE_CLASS_MAPPINGS = {
