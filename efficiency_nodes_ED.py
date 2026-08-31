@@ -8,6 +8,9 @@ import os
 import sys
 import re
 import nodes
+import torch
+
+from PIL import Image, ImageDraw, ImageFont
 
 from pathlib import Path #For embedding stacker ED
 from functools import reduce # For regional ED
@@ -26,6 +29,11 @@ from server import PromptServer
 
 import comfy.sd
 import comfy.utils
+
+try:
+    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, stack_fingerprint
+except ImportError:
+    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, stack_fingerprint
 
 sys.path.remove(comfy_dir)
 
@@ -74,6 +82,10 @@ _all_ed_context_input_output_data = {
   "control_net": ("control_net", "CONTROL_NET", "CONTROL_NET"),
   "lora_stack": ("lora_stack", "LORA_STACK", "LORA_STACK"),
   "clip_encoder": ("clip_encoder", "CLIP_ENCODER", "CLIP_ENCODER"),
+  "lora_pipe": ("lora_pipe", "ED_LORA_PIPE", "LORA_PIPE"),
+  "xy_raw_positive": ("xy_raw_positive", "STRING", "XY_RAW_POSITIVE"),
+  "xy_raw_negative": ("xy_raw_negative", "STRING", "XY_RAW_NEGATIVE"),
+  "cnet_stack": ("cnet_stack", "CONTROL_NET_STACK", "CNET_STACK"),
 }
 
 def new_context_ed(base_ctx, **kwargs):
@@ -770,6 +782,7 @@ class EfficientLoader_ED():
 
         # extract ext models from context
         model_opt, clip_opt, vae_name, cfg, sampler_name, scheduler, ref_image, ref_mask, lora_stack = self.extract_model_context(context_opt, ckpt_name, vae_name, cfg, sampler_name, scheduler, pixels, mask, lora_stack)
+        _, lora_pipe = context_2_tuple_ed(context_opt, ["lora_pipe"])
 
         # Embedding stacker process
         lora_stack, positive_prompt, negative_prompt, positive_refiner, negative_refiner = Embedding_Stacker_ED.embedding_process(lora_stack, positive_prompt, negative_prompt, positive_refiner, negative_refiner)     
@@ -809,6 +822,10 @@ class EfficientLoader_ED():
             
         else:
             positive_encoded = None
+
+        # 【XY V2】此时 positive_prompt 已完成与普通 ED 路径相同的通配符处理。
+        xy_raw_positive = positive_prompt
+        xy_raw_negative = negative_prompt
 
         #################### LATENT PROCESSING ####################
         #✍️ Txt2Img         
@@ -874,7 +891,9 @@ class EfficientLoader_ED():
                         image_width, image_height, lora_params, cnet_stack)
                 
         context = new_context_ed(None, model=model, clip=clip, vae=vae, positive=positive_encoded, negative=negative_encoded, 
-                latent=samples_latent, images=pixels, seed=seed, step_refiner=batch_size, cfg=cfg, ckpt_name=ckpt_name, sampler=sampler_name, scheduler=scheduler, clip_width=image_width, clip_height=image_height, text_pos_g=positive_prompt, text_neg_g=negative_prompt, mask=mask, lora_stack=lora_stack, clip_encoder=clip_encoder)
+                latent=samples_latent, images=pixels, seed=seed, step_refiner=batch_size, cfg=cfg, ckpt_name=ckpt_name, sampler=sampler_name, scheduler=scheduler, clip_width=image_width, clip_height=image_height, text_pos_g=positive_prompt, text_neg_g=negative_prompt, mask=mask, lora_stack=lora_stack, clip_encoder=clip_encoder,
+                lora_pipe=lora_pipe, xy_raw_positive=xy_raw_positive, xy_raw_negative=xy_raw_negative,
+                cnet_stack=cnet_stack)
 
         return (context, model, positive_encoded, negative_encoded, latent_list, pixels, clip, dependencies,)
 
@@ -1265,6 +1284,7 @@ class ExtModelInput_ED():
 
                     "optional": {
                             "lora_stack": ("LORA_STACK",),
+                            "lora_pipe": ("ED_LORA_PIPE",),
                             "ref_image": ("IMAGE",),
                             "ref_mask": ("MASK",)}
                     }
@@ -1273,8 +1293,11 @@ class ExtModelInput_ED():
     RETURN_NAMES = ("CONTEXT",)
     FUNCTION = "ext_model_input"
 
-    def ext_model_input(self, model, clip, lora_stack=None, ref_image=None, ref_mask=None, ):
-        context = new_context_ed(None, model=model, clip=clip, images=ref_image, mask=ref_mask, lora_stack=lora_stack)
+    def ext_model_input(self, model, clip, lora_stack=None, lora_pipe=None, ref_image=None, ref_mask=None, ):
+        context = new_context_ed(
+            None, model=model, clip=clip, images=ref_image, mask=ref_mask,
+            lora_stack=lora_stack, lora_pipe=lora_pipe,
+        )
         return (context,) 
 
 
@@ -1824,6 +1847,27 @@ class KSampler_ED():
         # Handle script if present
         latent_list = None
         script, refiner_script, do_refine_only = self.check_refiner_script(script)
+
+        # 【XY V2】ED 原生 LoRA 扫描在这里终止旧 XY 分支，统一模型和 conditioning 生命周期。
+        if script and "ed_lora_sweep_v2" in script:
+            if do_refine_only or refiner_script:
+                raise ValueError("XY LoRA Sweep ED 暂不支持 Refiner Script，请先关闭精修脚本。")
+            if properties['mask_detailer_mode']:
+                raise ValueError("XY LoRA Sweep ED 暂不支持 Mask Detailer 模式。")
+            if positive_opt is not None:
+                raise ValueError("XY LoRA Sweep ED 需要使用 Efficient Loader ED 的原始提示词，请断开 positive_opt。")
+
+            plan = script["ed_lora_sweep_v2"]
+            output_images, latent_list = self.sample_lora_sweep_v2(
+                context, plan, vae, latent_image, seed, steps, cfg, sampler_name,
+                scheduler, denoise, properties['tiled_vae'],
+            )
+            result_ui = nodes.PreviewImage().save_images(
+                output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
+            )["ui"]
+            set_preview_method(previous_preview_method)
+            context = new_context_ed(context, latent=latent_list, images=output_images)
+            return {"ui": result_ui, "result": (context, output_images, steps)}
         
         if do_refine_only:
             latent_list = ED_Util.vae_encode(vae, optional_image, properties['tiled_vae'])
@@ -1866,6 +1910,80 @@ class KSampler_ED():
         context = new_context_ed(context, latent=latent_list or latent_image, images=output_images)
 
         return {"ui": result_ui, "result": (context, output_images, steps)}
+
+    # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
+    @staticmethod
+    def sample_lora_sweep_v2(context, plan, vae, latent_image, seed, steps, cfg,
+                             sampler_name, scheduler, denoise, tiled_vae):
+        if not isinstance(plan, EDLoraSweepPlan):
+            raise TypeError("XY LoRA Sweep ED 收到了无效计划，请重新连接 ED 扫描节点。")
+
+        _, raw_positive, raw_negative, clip_encoder, cnet_stack = context_2_tuple_ed(
+            context, ["xy_raw_positive", "xy_raw_negative", "clip_encoder", "cnet_stack"]
+        )
+        if raw_positive is None or raw_negative is None:
+            raise ValueError("XY LoRA Sweep ED 缺少 Efficient Loader ED 的原始提示词上下文。")
+
+        pipe = plan.lora_pipe
+        images = []
+        latents = []
+        target_label = os.path.splitext(os.path.basename(plan.target_name))[0]
+        print(
+            f"[XY-ED-V2] execute target={plan.target_name}, cells={len(plan.values)}, "
+            f"base_stack={pipe.fingerprint}"
+        )
+
+        for cell_index, strength in enumerate(plan.values, start=1):
+            # [1] 每格从 Power Loader 保存的同一基础对象开始，完整栈只应用一次。
+            final_stack = plan.stack_for_value(strength)
+            final_fingerprint = stack_fingerprint(final_stack)
+            cell_model, cell_clip = ED_Util.apply_load_lora(
+                final_stack, pipe.base_model, pipe.base_clip,
+                f"XY LoRA Sweep ED [{cell_index}/{len(plan.values)}]",
+            )
+
+            # [2] 使用 Efficient Loader ED 相同的 BNK 编码入口重新构建 conditioning。
+            cell_positive = BNK_EncoderWrapper.imp_encode(raw_positive, cell_clip, clip_encoder)
+            cell_negative = BNK_EncoderWrapper.imp_encode(raw_negative, cell_clip, clip_encoder)
+            if cnet_stack:
+                cell_model, cell_positive, cell_negative = ED_Reg.apply_controlnet_region(
+                    cnet_stack, cell_positive, cell_negative, cell_model, cell_clip,
+                    seed, clip_encoder,
+                )
+            conditioning_fingerprint = tensor_to_hash(cell_positive[0][0])[:12]
+
+            # [3] 固定 seed、latent 和采样参数，仅允许目标 LoRA 强度发生变化。
+            cell_latent = nodes.KSampler().sample(
+                cell_model, seed, steps, cfg, sampler_name, scheduler,
+                cell_positive, cell_negative, latent_image, denoise=denoise,
+            )[0]
+            cell_image = ED_Util.vae_decode(vae, cell_latent, tiled_vae)
+            latents.append(cell_latent)
+            images.append(cell_image)
+            print(
+                f"[XY-ED-V2] cell={cell_index}, strength={strength:.6g}, "
+                f"stack={final_fingerprint}, conditioning={conditioning_fingerprint}, "
+                f"applied_count={len(final_stack)}, baseline_match={final_fingerprint == pipe.fingerprint}"
+            )
+
+        # [4] 返回带标签的单张横向网格，便于直接核对每个扫描值。
+        pil_images = [tensor2pil(image) for image in images]
+        header_height = 42
+        grid_width = sum(image.width for image in pil_images)
+        grid_height = max(image.height for image in pil_images) + header_height
+        grid = Image.new("RGB", (grid_width, grid_height), "white")
+        draw = ImageDraw.Draw(grid)
+        font = ImageFont.load_default()
+        offset_x = 0
+        for image, strength in zip(pil_images, plan.values):
+            label = f"{target_label}  strength={strength:.6g}"
+            draw.text((offset_x + 8, 12), label, fill="black", font=font)
+            grid.paste(image.convert("RGB"), (offset_x, header_height))
+            offset_x += image.width
+
+        latent_batch = dict(latents[0])
+        latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
+        return pil2tensor(grid), latent_batch
 
     @staticmethod
     def is_positive_changed(positive, positive_opt):
@@ -2774,8 +2892,8 @@ class _FlexibleLoraInputs(dict):
 
 if _POWER_LORA_BASE is not None:
     class PowerLoraLoaderStackED(_POWER_LORA_BASE):
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK")
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "ED_LORA_PIPE", "RGTHREE_CONTEXT")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "LORA_PIPE", "CONTEXT")
         CATEGORY = "Efficiency Nodes/Loaders"
 
         def load_loras(self, model=None, clip=None, **kwargs):
@@ -2805,11 +2923,14 @@ if _POWER_LORA_BASE is not None:
                     continue
                 stack.append((value["lora"], model_strength, clip_strength))
             print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
-            return (loaded_model, loaded_clip, stack)
+            lora_pipe = EDLoraPipe(base_model, base_clip, loaded_model, loaded_clip, stack)
+            context = new_context_ed(None, model=loaded_model, clip=loaded_clip, lora_pipe=lora_pipe)
+            print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
+            return (loaded_model, loaded_clip, stack, lora_pipe, context)
 else:
     class PowerLoraLoaderStackED:
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK")
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "ED_LORA_PIPE", "RGTHREE_CONTEXT")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "LORA_PIPE", "CONTEXT")
         CATEGORY = "Efficiency Nodes/Loaders"
         FUNCTION = "load_loras"
 
@@ -2843,7 +2964,42 @@ else:
                 setattr(clip, "_xy_base_clip", base_clip)
             except Exception:
                 pass
-            return (model, clip, stack)
+            lora_pipe = EDLoraPipe(base_model, base_clip, model, clip, stack)
+            context = new_context_ed(None, model=model, clip=clip, lora_pipe=lora_pipe)
+            print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
+            return (model, clip, stack, lora_pipe, context)
+
+
+# <1> 创建 ED 原生 LoRA 扫描计划；该节点不加载模型，也不编码提示词。
+class EDLoraSweep:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "lora_pipe": ("ED_LORA_PIPE",),
+                "target_lora": (folder_paths.get_filename_list("loras"),),
+                "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
+                "first_strength": ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+            },
+            "optional": {"script": ("SCRIPT",)},
+        }
+
+    RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN")
+    RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN")
+    FUNCTION = "build_plan"
+    CATEGORY = "Efficiency Nodes/XY Inputs"
+
+    def build_plan(self, lora_pipe, target_lora, batch_count, first_strength, last_strength, script=None):
+        values = generate_sweep_values(batch_count, first_strength, last_strength)
+        plan = EDLoraSweepPlan(lora_pipe, target_lora, values)
+        result = dict(script or {})
+        result["ed_lora_sweep_v2"] = plan
+        print(
+            f"[XY-ED-V2] plan target={plan.target_name}, values={plan.values}, "
+            f"base_stack={lora_pipe.fingerprint}"
+        )
+        return (result, plan)
 
 NODE_CLASS_MAPPINGS = {
     #ED
@@ -2866,6 +3022,7 @@ NODE_CLASS_MAPPINGS = {
     "Get Booru Tag 💬ED": GetBooruTag_ED,
     "Simple Text 💬ED": SimpleText_ED,
     "TIPO Script 💬ED": TIPOScript_ED,
+    "XY Input: LoRA Sweep 💬ED": EDLoraSweep,
     
     "FaceDetailer 💬ED": FaceDetailer_ED,
     "MaskDetailer 💬ED": MaskDetailer_ED,
