@@ -31,6 +31,13 @@ class TestEDLoraSweep(unittest.TestCase):
         with self.assertRaises(ValueError):
             EDLoraSweepPlan(self.pipe, "missing.safetensors", [1.0])
 
+    def test_zero_strength_target_can_be_swept(self):
+        zero_stack = [("Anima\\disabled-at-baseline.safetensors", 0.0, 0.0)]
+        pipe = EDLoraPipe(object(), object(), object(), object(), zero_stack)
+        plan = EDLoraSweepPlan(pipe, zero_stack[0][0], [0.0, 0.5, 1.0])
+        self.assertEqual(plan.stack_for_value(0.0), zero_stack)
+        self.assertEqual(plan.stack_for_value(0.5)[0][1:], (0.5, 0.5))
+
 
 if __name__ == "__main__":
     unittest.main()

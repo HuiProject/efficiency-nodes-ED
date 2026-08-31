@@ -2892,8 +2892,8 @@ class _FlexibleLoraInputs(dict):
 
 if _POWER_LORA_BASE is not None:
     class PowerLoraLoaderStackED(_POWER_LORA_BASE):
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "ED_LORA_PIPE", "RGTHREE_CONTEXT")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "LORA_PIPE", "CONTEXT")
+        RETURN_TYPES = ("RGTHREE_CONTEXT", "ED_LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
+        RETURN_NAMES = ("CONTEXT", "LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
         CATEGORY = "Efficiency Nodes/Loaders"
 
         def load_loras(self, model=None, clip=None, **kwargs):
@@ -2919,18 +2919,16 @@ if _POWER_LORA_BASE is not None:
                 model_strength = float(value.get("strength", 0.0))
                 clip_strength = value.get("strengthTwo", model_strength)
                 clip_strength = model_strength if clip_strength is None else float(clip_strength)
-                if model_strength == 0 and clip_strength == 0:
-                    continue
                 stack.append((value["lora"], model_strength, clip_strength))
             print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
             lora_pipe = EDLoraPipe(base_model, base_clip, loaded_model, loaded_clip, stack)
             context = new_context_ed(None, model=loaded_model, clip=loaded_clip, lora_pipe=lora_pipe)
             print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
-            return (loaded_model, loaded_clip, stack, lora_pipe, context)
+            return (context, lora_pipe, loaded_model, loaded_clip, stack)
 else:
     class PowerLoraLoaderStackED:
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "ED_LORA_PIPE", "RGTHREE_CONTEXT")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "LORA_PIPE", "CONTEXT")
+        RETURN_TYPES = ("RGTHREE_CONTEXT", "ED_LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
+        RETURN_NAMES = ("CONTEXT", "LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
         CATEGORY = "Efficiency Nodes/Loaders"
         FUNCTION = "load_loras"
 
@@ -2950,11 +2948,10 @@ else:
                 sm = float(value.get("strength", 0.0))
                 sc = value.get("strengthTwo", sm)
                 sc = sm if sc is None else float(sc)
-                if sm == 0 and sc == 0:
-                    continue
-                path = folder_paths.get_full_path("loras", name)
-                model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
                 stack.append((name, sm, sc))
+                if sm != 0 or sc != 0:
+                    path = folder_paths.get_full_path("loras", name)
+                    model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
             print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
             try:
                 setattr(model, "_xy_base_model", base_model)
@@ -2967,7 +2964,7 @@ else:
             lora_pipe = EDLoraPipe(base_model, base_clip, model, clip, stack)
             context = new_context_ed(None, model=model, clip=clip, lora_pipe=lora_pipe)
             print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
-            return (model, clip, stack, lora_pipe, context)
+            return (context, lora_pipe, model, clip, stack)
 
 
 # <1> 创建 ED 原生 LoRA 扫描计划；该节点不加载模型，也不编码提示词。
