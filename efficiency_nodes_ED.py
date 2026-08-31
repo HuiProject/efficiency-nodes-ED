@@ -2772,8 +2772,8 @@ class _FlexibleLoraInputs(dict):
 
 if _POWER_LORA_BASE is not None:
     class PowerLoraLoaderStackED(_POWER_LORA_BASE):
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "MODEL", "CLIP")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "BASE_MODEL", "BASE_CLIP")
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK")
         CATEGORY = "Efficiency Nodes/Loaders"
 
         def load_loras(self, model=None, clip=None, **kwargs):
@@ -2791,11 +2791,12 @@ if _POWER_LORA_BASE is not None:
                 if model_strength == 0 and clip_strength == 0:
                     continue
                 stack.append((value["lora"], model_strength, clip_strength))
-            return (*result, stack, base_model, base_clip)
+            print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
+            return (*result, stack)
 else:
     class PowerLoraLoaderStackED:
-        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK", "MODEL", "CLIP")
-        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK", "BASE_MODEL", "BASE_CLIP")
+        RETURN_TYPES = ("MODEL", "CLIP", "LORA_STACK")
+        RETURN_NAMES = ("MODEL", "CLIP", "LORA_STACK")
         CATEGORY = "Efficiency Nodes/Loaders"
         FUNCTION = "load_loras"
 
@@ -2820,7 +2821,8 @@ else:
                 path = folder_paths.get_full_path("loras", name)
                 model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
                 stack.append((name, sm, sc))
-            return (model, clip, stack, base_model, base_clip)
+            print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
+            return (model, clip, stack)
 
 NODE_CLASS_MAPPINGS = {
     #ED
