@@ -529,17 +529,7 @@ def global_preview_method():
     return args.preview_method
 
 # -----------------------------------------------------------------------------------------------------------------------
-# Delete efficiency nodes web extensions from 'ComfyUI\web\extensions'.
-# Pull https://github.com/comfyanonymous/ComfyUI/pull/1273 now allows defining web extensions through a dir path in init
-import shutil
-
-# Destination directory
-destination_dir = os.path.join(os.path.dirname(my_dir), 'web')
-
-# Check if the directory exists and delete it
-if os.path.exists(destination_dir):
-    shutil.rmtree(destination_dir)
-
+# 【独立运行】迁移工具不得在导入时删除任何目录。
 # -----------------------------------------------------------------------------------------------------------------------
 # Other
 class XY_Capsule:
