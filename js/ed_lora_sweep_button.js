@@ -41,34 +41,28 @@ function addRow(node, selected) {
     console.debug("[ED-UI] LoRA Sweep row added", { node: node.id, index, lora: selected });
 }
 
-function eventForMenu(args) {
-    const event = (args || []).find(v => v && (v.type || Number.isFinite(v.clientX)));
-    return event || app.canvas?.last_mouse_event || app.canvas?.lastMouseEvent || undefined;
-}
-
-function openChooser(node, args) {
+function addNextFromStack(node) {
     const values = stackNames(node);
     if (values.length <= 1) {
         console.warn("[ED-UI] LoRA Sweep chooser has no connected Power Loader entries", node.id);
         return;
     }
-    new LiteGraph.ContextMenu(values, {
-        event: eventForMenu(args),
-        title: "Choose a LoRA from Power Loader",
-        className: "dark",
-        node,
-        callback: (value) => {
-            const selected = typeof value === "string" ? value : value?.content;
-            console.debug("[ED-UI] LoRA Sweep chooser selected", { node: node.id, selected });
-            addRow(node, selected);
-        },
-    });
+    const existing = new Set((node.widgets || [])
+        .filter(w => /^scan_lora_name_\d+$/.test(w.name || ""))
+        .map(w => w.value));
+    const selected = values.slice(1).find(name => !existing.has(name));
+    if (!selected) {
+        console.warn("[ED-UI] all connected LoRAs are already added", node.id);
+        return;
+    }
+    console.debug("[ED-UI] direct Add Lora probe", { node: node.id, selected });
+    addRow(node, selected);
 }
 
 function install(node) {
     if (!isSweepNode(node)) return;
     if ((node.widgets || []).some(w => w.__edSweepAddButton)) return;
-    const button = node.addWidget("button", "➕ Add Lora", null, (...args) => openChooser(node, args));
+    const button = node.addWidget("button", "➕ Add Lora", null, () => addNextFromStack(node));
     button.__edSweepAddButton = true;
     button.serialize = false;
     button.options = button.options || {};
