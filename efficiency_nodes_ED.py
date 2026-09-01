@@ -31,9 +31,9 @@ import comfy.sd
 import comfy.utils
 
 try:
-    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, stack_fingerprint
+    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
 except ImportError:
-    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, stack_fingerprint
+    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
 
 sys.path.remove(comfy_dir)
 
@@ -1868,6 +1868,24 @@ class KSampler_ED():
             set_preview_method(previous_preview_method)
             context = new_context_ed(context, latent=latent_list, images=output_images)
             return {"ui": result_ui, "result": (context, output_images, steps)}
+
+        # XY Plot bridge: two ED sweep axes are combined here, from the same
+        # immutable Power Loader pipe, so each cell applies both LoRAs exactly once.
+        if script and "xyplot" in script:
+            xy = script["xyplot"]
+            x_type, x_values, y_type, y_values = xy[:4]
+            ed_types = {"ED_LORA_SWEEP_X", "ED_LORA_SWEEP_Y"}
+            if x_type in ed_types or y_type in ed_types:
+                output_images, latent_list = self.sample_lora_xy_grid_v2(
+                    context, xy, vae, latent_image, seed, steps, cfg, sampler_name,
+                    scheduler, denoise, properties['tiled_vae'],
+                )
+                result_ui = nodes.PreviewImage().save_images(
+                    output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
+                )["ui"]
+                set_preview_method(previous_preview_method)
+                context = new_context_ed(context, latent=latent_list, images=output_images)
+                return {"ui": result_ui, "result": (context, output_images, steps)}
         
         if do_refine_only:
             latent_list = ED_Util.vae_encode(vae, optional_image, properties['tiled_vae'])
@@ -1981,6 +1999,67 @@ class KSampler_ED():
             grid.paste(image.convert("RGB"), (offset_x, header_height))
             offset_x += image.width
 
+        latent_batch = dict(latents[0])
+        latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
+        return pil2tensor(grid), latent_batch
+
+    @staticmethod
+    def sample_lora_xy_grid_v2(context, xy, vae, latent_image, seed, steps, cfg,
+                               sampler_name, scheduler, denoise, tiled_vae):
+        x_type, x_values, y_type, y_values = xy[:4]
+        x_axes = [v for v in (x_values or []) if isinstance(v, EDLoraAxisValue)]
+        y_axes = [v for v in (y_values or []) if isinstance(v, EDLoraAxisValue)]
+        if not x_axes:
+            x_axes = [None]
+        if not y_axes:
+            y_axes = [None]
+        source = next((v for v in x_axes + y_axes if v is not None), None)
+        if source is None:
+            raise ValueError("ED LoRA XY Plot 至少需要一个 Sweep 轴")
+        pipe = source.plan.lora_pipe
+        _, raw_positive, raw_negative, clip_encoder, cnet_stack = context_2_tuple_ed(
+            context, ["xy_raw_positive", "xy_raw_negative", "clip_encoder", "cnet_stack"]
+        )
+        if raw_positive is None or raw_negative is None:
+            raise ValueError("ED LoRA XY Plot 缺少原始提示词上下文")
+        print(f"[XY-ED-V2] grid x={len(x_axes)}, y={len(y_axes)}, pipe={pipe.fingerprint}")
+        images, latents = [], []
+        for yi, y_axis in enumerate(y_axes, 1):
+            for xi, x_axis in enumerate(x_axes, 1):
+                xp = x_axis.plan if x_axis else None
+                yp = y_axis.plan if y_axis else None
+                xv = x_axis.value if x_axis else None
+                yv = y_axis.value if y_axis else None
+                final_stack = combine_sweep_stacks(pipe, xp, xv, yp, yv)
+                cell_model, cell_clip = ED_Util.apply_load_lora(
+                    final_stack, pipe.base_model, pipe.base_clip,
+                    f"ED LoRA XY [{yi},{xi}]",
+                )
+                cell_positive = BNK_EncoderWrapper.imp_encode(raw_positive, cell_clip, clip_encoder)
+                cell_negative = BNK_EncoderWrapper.imp_encode(raw_negative, cell_clip, clip_encoder)
+                if cnet_stack:
+                    cell_model, cell_positive, cell_negative = ED_Reg.apply_controlnet_region(
+                        cnet_stack, cell_positive, cell_negative, cell_model, cell_clip, seed, clip_encoder)
+                cell_latent = nodes.KSampler().sample(
+                    cell_model, seed, steps, cfg, sampler_name, scheduler,
+                    cell_positive, cell_negative, latent_image, denoise=denoise,
+                )[0]
+                latents.append(cell_latent)
+                images.append(ED_Util.vae_decode(vae, cell_latent, tiled_vae))
+                print(f"[XY-ED-V2] cell=({yi},{xi}) x={xv} y={yv} stack={stack_fingerprint(final_stack)}")
+        pil = [tensor2pil(image) for image in images]
+        cell_w = max(image.width for image in pil)
+        cell_h = max(image.height for image in pil)
+        header, label_w = 46, 120
+        grid = Image.new("RGB", (label_w + len(x_axes) * cell_w, header + len(y_axes) * cell_h), "white")
+        draw = ImageDraw.Draw(grid)
+        font = ImageFont.load_default()
+        for xi, axis in enumerate(x_axes):
+            draw.text((label_w + xi * cell_w + 6, 12), axis.label if axis else "X", fill="black", font=font)
+        for yi, axis in enumerate(y_axes):
+            draw.text((6, header + yi * cell_h + 8), axis.label if axis else "Y", fill="black", font=font)
+            for xi in range(len(x_axes)):
+                grid.paste(pil[yi * len(x_axes) + xi].convert("RGB"), (label_w + xi * cell_w, header + yi * cell_h))
         latent_batch = dict(latents[0])
         latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
         return pil2tensor(grid), latent_batch
@@ -2969,34 +3048,60 @@ else:
 
 # <1> 创建 ED 原生 LoRA 扫描计划；该节点不加载模型，也不编码提示词。
 class EDLoraSweep:
+    MAX_SCAN_LORAS = 9
     @classmethod
     def INPUT_TYPES(cls):
         return {
             "required": {
                 "lora_pipe": ("ED_LORA_PIPE",),
-                "target_lora": (folder_paths.get_filename_list("loras"),),
                 "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
+                "axis": (["X", "Y"], {"default": "X"}),
+                "target_lora": (folder_paths.get_filename_list("loras"),),
                 "first_strength": ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
             },
-            "optional": {"script": ("SCRIPT",)},
+            # Dynamic rows are injected by the frontend, like Power Loader.
+            "optional": _FlexibleLoraInputs({"script": ("SCRIPT",)}),
         }
 
-    RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN")
-    RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN")
+    RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN", "XY")
+    RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN", "XY_AXIS")
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
-    def build_plan(self, lora_pipe, target_lora, batch_count, first_strength, last_strength, script=None):
-        values = generate_sweep_values(batch_count, first_strength, last_strength)
-        plan = EDLoraSweepPlan(lora_pipe, target_lora, values)
+    def build_plan(self, lora_pipe, batch_count, axis="X", target_lora=None, first_strength=0.5, last_strength=1.0, script=None, **kwargs):
+        rows = []
+        dynamic_names = {}
+        for key, value in kwargs.items():
+            if key.startswith("scan_lora_name_"):
+                suffix = key.rsplit("_", 1)[-1]
+                dynamic_names[suffix] = [value, kwargs.get(f"scan_lora_{suffix}_toggle", True),
+                                         kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
+                                         kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)]
+            if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
+                if value.get("on", True) and value.get("lora") not in (None, "None"):
+                    rows.append((value["lora"], float(value.get("first_strength", 0.5)), float(value.get("last_strength", 1.0))))
+        for name, toggle, first, last in dynamic_names.values():
+            if toggle and name not in (None, "None"):
+                rows.append((name, float(first), float(last)))
+        # Backward-compatible fixed-field parsing for saved pre-dynamic nodes.
+        if not rows:
+            if target_lora:
+                rows = [(target_lora, float(first_strength), float(last_strength))]
+        if not rows:
+            raise ValueError("请点击 Add Lora 并至少选择一个 LoRA")
+        values = generate_sweep_values(batch_count, 0.0, 1.0)
+        plan = EDLoraSweepPlan(lora_pipe, [item[0] for item in rows], values, target_specs=rows)
         result = dict(script or {})
         result["ed_lora_sweep_v2"] = plan
         print(
-            f"[XY-ED-V2] plan target={plan.target_name}, values={plan.values}, "
+            f"[XY-ED-V2] plan targets={plan.target_names}, values={plan.values}, "
             f"base_stack={lora_pipe.fingerprint}"
         )
-        return (result, plan)
+        axis_type = "ED_LORA_SWEEP_X" if str(axis).upper() == "X" else "ED_LORA_SWEEP_Y"
+        axis = (axis_type, plan.axis_values())
+        print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, values={values}")
+        return (result, plan, axis)
 
 NODE_CLASS_MAPPINGS = {
     #ED

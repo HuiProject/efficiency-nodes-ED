@@ -1,6 +1,6 @@
 import unittest
 
-from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, stack_fingerprint
+from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
 
 
 class TestEDLoraSweep(unittest.TestCase):
@@ -37,6 +37,31 @@ class TestEDLoraSweep(unittest.TestCase):
         plan = EDLoraSweepPlan(pipe, zero_stack[0][0], [0.0, 0.5, 1.0])
         self.assertEqual(plan.stack_for_value(0.0), zero_stack)
         self.assertEqual(plan.stack_for_value(0.5)[0][1:], (0.5, 0.5))
+
+    def test_two_axes_combine_without_accumulation(self):
+        x = EDLoraSweepPlan(self.pipe, "Anima\\first.safetensors", [0.5])
+        y = EDLoraSweepPlan(self.pipe, "Anima\\target.safetensors", [0.25])
+        combined = combine_sweep_stacks(self.pipe, x, 0.5, y, 0.25)
+        self.assertEqual(combined, [
+            ("Anima\\first.safetensors", 0.5, 0.5),
+            ("Anima\\target.safetensors", 0.25, 0.25),
+            ("Anima\\last.safetensors", 0.2, 0.3),
+        ])
+
+    def test_one_axis_can_override_multiple_loras(self):
+        plan = EDLoraSweepPlan(self.pipe, ["Anima\\first.safetensors", "Anima\\target.safetensors"], [0.0, 1.0],
+                               target_specs=[("Anima\\first.safetensors", 0.2, 0.6),
+                                             ("Anima\\target.safetensors", 0.4, 0.8)])
+        values = plan.axis_values()
+        self.assertEqual(plan.stack_for_value(values[0].value), [
+            ("Anima\\first.safetensors", 0.2, 0.2),
+            ("Anima\\target.safetensors", 0.4, 0.4),
+            ("Anima\\last.safetensors", 0.2, 0.3),
+        ])
+        self.assertEqual(plan.stack_for_value(values[1].value)[0:2], [
+            ("Anima\\first.safetensors", 0.6, 0.6),
+            ("Anima\\target.safetensors", 0.8, 0.8),
+        ])
 
 
 if __name__ == "__main__":

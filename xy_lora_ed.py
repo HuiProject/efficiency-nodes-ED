@@ -41,30 +41,89 @@ class EDLoraPipe:
 
 # <4> 保存一个目标 LoRA 的单轴扫描，不携带或修改模型对象。
 class EDLoraSweepPlan:
-    def __init__(self, lora_pipe, target_name, values):
-        target_key = normalize_name(target_name)
-        target = next(
-            (item for item in lora_pipe.stack if normalize_name(item[0]) == target_key),
-            None,
-        )
-        if target is None:
-            raise ValueError(f"目标 LoRA 未启用或不在连接栈中: {target_name}")
+    def __init__(self, lora_pipe, target_name, values, target_specs=None):
+        requested = [target_name] if isinstance(target_name, str) else list(target_name or [])
+        if target_specs:
+            requested = [spec[0] for spec in target_specs]
+        requested = [str(name) for name in requested if name and str(name) != "None"]
+        targets = []
+        for name in requested:
+            target_key = normalize_name(name)
+            target = next((item for item in lora_pipe.stack if normalize_name(item[0]) == target_key), None)
+            if target is None:
+                raise ValueError(f"目标 LoRA 未启用或不在连接栈中: {name}")
+            if all(normalize_name(target[0]) != normalize_name(item[0]) for item in targets):
+                targets.append(target)
+        if not targets:
+            raise ValueError("至少需要选择一个用于扫描的 LoRA")
         if not values:
             raise ValueError("LoRA 扫描至少需要一个强度值")
 
         self.lora_pipe = lora_pipe
-        self.target_name = target[0]
+        self.targets = targets
+        self.target_names = [item[0] for item in targets]
+        self.target_name = ", ".join(self.target_names)
         self.values = [float(value) for value in values]
+        self.target_ranges = {
+            normalize_name(name): (float(first), float(last))
+            for name, first, last in (target_specs or [])
+        }
+
+    def axis_values(self):
+        """Return one XY value per batch index, with independent ranges per LoRA."""
+        result = []
+        for index in range(len(self.values)):
+            overrides = {}
+            labels = []
+            for target in self.targets:
+                first, last = self.target_ranges.get(normalize_name(target[0]), (self.values[0], self.values[-1]))
+                count = max(1, len(self.values))
+                value = first if count == 1 else first + (last - first) * index / (count - 1)
+                overrides[normalize_name(target[0])] = value
+                labels.append(f"{target[0]}={value:.6g}")
+            result.append(EDLoraAxisValue(self, overrides, ", ".join(labels)))
+        return result
 
     def stack_for_value(self, value):
         """只替换目标项，严格保留其他项目的顺序与强度。"""
-        target_key = normalize_name(self.target_name)
+        if isinstance(value, dict):
+            overrides = {normalize_name(k): float(v) for k, v in value.items()}
+        else:
+            overrides = {normalize_name(name): float(value) for name in self.target_names}
+        target_keys = set(overrides)
         return [
-            (name, float(value), float(value))
-            if normalize_name(name) == target_key
+            (name, overrides[normalize_name(name)], overrides[normalize_name(name)])
+            if normalize_name(name) in target_keys
             else (name, float(model_strength), float(clip_strength))
             for name, model_strength, clip_strength in self.lora_pipe.stack
         ]
+
+
+class EDLoraAxisValue:
+    """One value exposed to the standard XY Plot while retaining its ED plan."""
+    def __init__(self, plan, value, label=None):
+        self.plan = plan
+        self.value = value
+        self.label = label or f"{plan.target_name}={value}"
+
+
+def combine_sweep_stacks(base_pipe, x_plan, x_value, y_plan=None, y_value=None):
+    """Apply X and Y overrides to one immutable loader stack, preserving order."""
+    overrides = {}
+    for plan, value in ((x_plan, x_value), (y_plan, y_value)):
+        if plan is None:
+            continue
+        pairs = value.items() if isinstance(value, dict) else ((name, value) for name in plan.target_names)
+        for target_name, target_value in pairs:
+            key = normalize_name(target_name)
+            if key in overrides and abs(overrides[key] - float(target_value)) > 1e-9:
+                raise ValueError(f"X/Y sweep targets the same LoRA with different values: {target_name}")
+            overrides[key] = float(target_value)
+    return [
+        (name, overrides.get(normalize_name(name), float(model_strength)),
+         overrides.get(normalize_name(name), float(clip_strength)))
+        for name, model_strength, clip_strength in base_pipe.stack
+    ]
 
 
 # <5> 生成包含首尾值的等距扫描。
