@@ -45,7 +45,7 @@ const NODE_WIDGET_HANDLERS = {
         'lora_count': handleLoRAStackerEDLoraCount
     },
     "XY Input: LoRA Sweep 💬ED": {
-        'scan_lora_count': handleEDLoraSweepCount
+        'lora_count': handleEDLoraSweepCount
     },
     "SUPIR Sampler 💬ED": {
         'set_seed_cfg_sampler': handleEfficientSamplerSetSeed_ED
@@ -479,13 +479,18 @@ function handleLoRAStackerEDLoraCount(node, widget) {
 // Keep the optional multi-LoRA sweep rows aligned with the selected count.
 function handleEDLoraSweepCount(node, widget) {
     const count = Math.max(0, Math.min(9, Number(widget.value) || 0));
+    if (node.__edSweepAppliedCount === count && !node.__edSweepNeedsLayout) return;
+    node.__edSweepAppliedCount = count;
+    node.__edSweepNeedsLayout = false;
     // The legacy single-target controls remain available to old workflows but
     // are hidden once Add Lora mode is active.
     const multiMode = count > 0;
     toggleWidget(node, findWidgetByName(node, "target_lora"), !multiMode);
     toggleWidget(node, findWidgetByName(node, "first_strength"), !multiMode);
     toggleWidget(node, findWidgetByName(node, "last_strength"), !multiMode);
-    toggleWidget(node, widget, false);
+    // Keep the count control visible so rows can be changed without a hidden
+    // widget trapping the user in the previous layout.
+    toggleWidget(node, widget, true);
     for (let i = 1; i <= 9; i++) {
         const name = findWidgetByName(node, `scan_lora_name_${i}`);
         const toggle = findWidgetByName(node, `scan_lora_${i}_toggle`);
@@ -544,21 +549,10 @@ function isEDLoraSweepNode(node) {
 function initEDLoraSweepUI(node) {
     if (!isEDLoraSweepNode(node)) return;
     const legacyName = findWidgetByName(node, "target_lora")?.value;
-    const legacyFirst = findWidgetByName(node, "first_strength")?.value ?? 0.5;
-    const legacyLast = findWidgetByName(node, "last_strength")?.value ?? 1.0;
-    // Remove legacy fixed rows from an already-loaded node instance. Dynamic
-    // rows below are the only scan controls rendered after this migration.
-    if (node.widgets) {
-        node.widgets = node.widgets.filter(widget =>
-            !/^scan_lora_name_\d+$/.test(widget.name || "") &&
-            !/^scan_lora_\d+_toggle$/.test(widget.name || "") &&
-            !/^scan_lora_(first|last)_strength_\d+$/.test(widget.name || "") &&
-            widget.name !== "scan_lora_count");
-    }
     const legacy = findWidgetByName(node, "target_lora");
     if (legacy && legacyName && !legacy.value) legacy.value = legacyName;
-    // The standalone ED.LoRASweepAddButton extension owns the chooser-backed
-    // button. Do not create a competing plain button here.
+    const count = findWidgetByName(node, "lora_count");
+    if (count) handleEDLoraSweepCount(node, count);
     node.setSize([node.size[0], node.computeSize()[1]]);
     restrictSweepLoraCombos(node);
     if (!node.__edSweepConnectionBound) {
@@ -566,8 +560,18 @@ function initEDLoraSweepUI(node) {
         const oldConnectionsChange = node.onConnectionsChange;
         node.onConnectionsChange = function () {
             const result = oldConnectionsChange?.apply(this, arguments);
+            this.__edSweepNeedsLayout = true;
             restrictSweepLoraCombos(this);
             return result;
+        };
+    }
+    if (!node.__edSweepLayoutGuard) {
+        node.__edSweepLayoutGuard = true;
+        const originalDraw = node.onDrawForeground;
+        node.onDrawForeground = function (ctx) {
+            const countWidget = findWidgetByName(this, "lora_count");
+            if (countWidget) handleEDLoraSweepCount(this, countWidget);
+            return originalDraw?.apply(this, arguments);
         };
     }
     node.setDirtyCanvas(true, true);
@@ -661,18 +665,29 @@ app.registerExtension({
     },
 });
 
-// Power Loader-style Add Lora button for ED multi-target sweeps.
+// Power Loader rows can be added after the graph is already connected. Keep
+// Sweep choices synchronized without mutating node widgets or creating DOM
+// overlays; the fixed row values remain owned by LiteGraph.
+let edSweepRefreshTimer = null;
+function scheduleSweepStackRefresh() {
+    if (edSweepRefreshTimer !== null) return;
+    edSweepRefreshTimer = setTimeout(() => {
+        edSweepRefreshTimer = null;
+        for (const node of app.graph?._nodes || []) {
+            if (isEDLoraSweepNode(node)) restrictSweepLoraCombos(node);
+        }
+    }, 250);
+}
+
 app.registerExtension({
-    name: "ED.LoRASweepAddButton",
+    name: "ED.LoRASweepStackSync",
     nodeCreated(node) {
-        initEDLoraSweepUI(node);
-        const oldConnectionsChange = node.onConnectionsChange;
-        node.onConnectionsChange = function () {
-            const result = oldConnectionsChange?.apply(this, arguments);
-            restrictSweepLoraCombos(this);
-            return result;
-        };
-        node.setDirtyCanvas(true, true);
+        if (!isEDLoraSweepNode(node)) return;
+        scheduleSweepStackRefresh();
+    },
+    async afterConfigureGraph() {
+        scheduleSweepStackRefresh();
     },
 });
 
+setInterval(scheduleSweepStackRefresh, 1000);

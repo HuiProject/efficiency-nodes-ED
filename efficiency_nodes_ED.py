@@ -3031,45 +3031,72 @@ class EDLoraSweep:
     MAX_SCAN_LORAS = 9
     @classmethod
     def INPUT_TYPES(cls):
-        return {
+        inputs = {
             "required": {
                 "lora_pipe": ("ED_LORA_PIPE",),
                 "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
                 "axis": (["X", "Y"], {"default": "X"}),
-                "target_lora": (folder_paths.get_filename_list("loras"),),
+                # Compatibility field for old workflows; the UI hides it and
+                # replaces it with stack-scoped rows below.
+                "target_lora": (["None"],),
                 "first_strength": ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "lora_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_SCAN_LORAS, "step": 1}),
             },
-            # Dynamic rows are injected by the frontend, like Power Loader.
+            # Fixed stacker-style rows are hidden/shown by lora_count.
             "optional": _FlexibleLoraInputs({"script": ("SCRIPT",)}),
         }
+
+        for i in range(1, cls.MAX_SCAN_LORAS + 1):
+            inputs["required"][f"scan_lora_name_{i}"] = (["None"],)
+            inputs["required"][f"scan_lora_{i}_toggle"] = ("BOOLEAN", {"default": True})
+            inputs["required"][f"scan_lora_first_strength_{i}"] = ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01})
+            inputs["required"][f"scan_lora_last_strength_{i}"] = ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01})
+        return inputs
 
     RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN", "XY")
     RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN", "XY_AXIS")
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
-    def build_plan(self, lora_pipe, batch_count, axis="X", target_lora=None, first_strength=0.5, last_strength=1.0, script=None, **kwargs):
+    def build_plan(self, lora_pipe, batch_count, axis="X", target_lora=None,
+                   first_strength=0.5, last_strength=1.0, lora_count=0,
+                   script=None, **kwargs):
         rows = []
-        dynamic_names = {}
-        for key, value in kwargs.items():
-            if key.startswith("scan_lora_name_"):
-                suffix = key.rsplit("_", 1)[-1]
-                dynamic_names[suffix] = [value, kwargs.get(f"scan_lora_{suffix}_toggle", True),
-                                         kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
-                                         kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)]
-            if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
-                if value.get("on", True) and value.get("lora") not in (None, "None"):
-                    rows.append((value["lora"], float(value.get("first_strength", 0.5)), float(value.get("last_strength", 1.0))))
-        for name, toggle, first, last in dynamic_names.values():
-            if toggle and name not in (None, "None"):
-                rows.append((name, float(first), float(last)))
+        # Stacker-style fixed rows are the canonical contract. Only the first
+        # lora_count rows are read, so hidden rows cannot leak into execution.
+        count = max(0, min(int(lora_count or 0), self.MAX_SCAN_LORAS))
+        for i in range(1, count + 1):
+            name = kwargs.get(f"scan_lora_name_{i}")
+            toggle = kwargs.get(f"scan_lora_{i}_toggle", True)
+            first = kwargs.get(f"scan_lora_first_strength_{i}", 0.5)
+            last = kwargs.get(f"scan_lora_last_strength_{i}", 1.0)
+            if toggle and name not in (None, "", "None"):
+                rows.append((str(name), float(first), float(last)))
+        print(f"[XY-ED-STACKER] count={count}, enabled_rows={rows}")
+
+        # Compatibility with pre-stacker workflows that submitted dynamic row
+        # dictionaries or a single target field.
+        if not rows:
+            dynamic_names = {}
+            for key, value in kwargs.items():
+                if key.startswith("scan_lora_name_"):
+                    suffix = key.rsplit("_", 1)[-1]
+                    dynamic_names[suffix] = [value, kwargs.get(f"scan_lora_{suffix}_toggle", True),
+                                             kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
+                                             kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)]
+                if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
+                    if value.get("on", True) and value.get("lora") not in (None, "None"):
+                        rows.append((value["lora"], float(value.get("first_strength", 0.5)), float(value.get("last_strength", 1.0))))
+            for name, toggle, first, last in dynamic_names.values():
+                if toggle and name not in (None, "None"):
+                    rows.append((name, float(first), float(last)))
         # Backward-compatible fixed-field parsing for saved pre-dynamic nodes.
         if not rows:
             if target_lora:
                 rows = [(target_lora, float(first_strength), float(last_strength))]
         if not rows:
-            raise ValueError("请点击 Add Lora 并至少选择一个 LoRA")
+            raise ValueError("LoRA Sweep 至少需要 lora_count 个已启用的 LoRA 行")
         values = generate_sweep_values(batch_count, 0.0, 1.0)
         plan = EDLoraSweepPlan(lora_pipe, [item[0] for item in rows], values, target_specs=rows)
         result = dict(script or {})
