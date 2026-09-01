@@ -45,16 +45,46 @@ function addRow(node, selectedName = "None") {
     node.setDirtyCanvas(true, true);
 };
 
-function addRowWithChooser(node, event) {
+function menuEvent(node, callbackArgs = []) {
+    // LiteGraph button callbacks differ between frontend versions. Only accept
+    // an actual pointer event; canvas/node arguments previously caused (0, 0)
+    // menus and swallowed the selection callback.
+    const pointer = callbackArgs.find((value) => value &&
+        Number.isFinite(value.clientX) && Number.isFinite(value.clientY));
+    if (pointer) return pointer;
+    const last = app.canvas?.last_mouse_event || app.canvas?.lastMouseEvent;
+    if (last && Number.isFinite(last.clientX) && Number.isFinite(last.clientY)) return last;
+    const rect = app.canvas?.canvas?.getBoundingClientRect?.();
+    return rect ? { clientX: rect.left + 24, clientY: rect.top + 24 } : { clientX: 24, clientY: 24 };
+}
+
+function addRowWithChooser(node, callbackArgs) {
     const names = stackNames(node) || ["None"];
     new LiteGraph.ContextMenu(names, {
-        event: event || window.event || {clientX: 0, clientY: 0},
+        event: menuEvent(node, callbackArgs),
         title: "Choose a LoRA from Power Loader",
         className: "dark",
         callback: (value) => {
-        if (value && value !== "None") addRow(node, value);
+        const selected = typeof value === "string" ? value : value?.content;
+        if (selected && selected !== "None") {
+            addRow(node, selected);
+            node.setDirtyCanvas(true, true);
+        }
         },
     });
+}
+
+function hasSweepAddButton(node) {
+    return (node.widgets || []).some(widget => widget.__edSweepAddButton === true);
+}
+
+function installSweepAddButton(node) {
+    if (hasSweepAddButton(node)) return;
+    const button = node.addWidget("button", "➕ Add Lora", null,
+        (...args) => addRowWithChooser(node, args), { serialize: false });
+    // Use an object marker instead of the display label. ComfyUI may normalize
+    // button names, so checking `widget.name` was not stable.
+    button.__edSweepAddButton = true;
 }
 
 app.registerExtension({
@@ -64,11 +94,7 @@ app.registerExtension({
         const original = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
             original?.apply(this, arguments);
-            if (!this.widgets?.some(w => w.name === "ed_add_lora_sweep")) {
-                this.addWidget("button", "➕ Add Lora", null, (value, event) => addRowWithChooser(this, event), {
-                    serialize: false, property: "ed_add_lora_sweep"
-                });
-            }
+            installSweepAddButton(this);
             refreshTarget(this);
             const old = this.onConnectionsChange;
             if (!this.__edSweepStandaloneBound) {
@@ -92,11 +118,7 @@ app.registerExtension({
 
 function ensureSweepNode(node) {
     if (!isSweepNode(node)) return;
-    if (!node.widgets?.some(w => w.name === "ed_add_lora_sweep")) {
-        node.addWidget("button", "➕ Add Lora", null, (value, event) => addRowWithChooser(node, event), {
-            serialize: false, property: "ed_add_lora_sweep"
-        });
-    }
+    installSweepAddButton(node);
     refreshTarget(node);
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
