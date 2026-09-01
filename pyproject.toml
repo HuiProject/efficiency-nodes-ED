@@ -1,6 +1,6 @@
 [project]
 name = "efficiency-nodes-ED"
-description = "Expansion of Efficiency Nodes for ComfyUI. Significant UX improvements.[w/NOTE: This node requires [a/efficiency-nodes-comfyui](https://github.com/jags111/efficiency-nodes-comfyui) and [a/rgthree-comfy](https://github.com/rgthree/rgthree-comfy); it also requires start.bat to run.]"
+description = "独立的 Efficiency Nodes ED 扩展：核心 Loader、LoRA Stack 与 XY 流程均由本插件提供；Impact、SUPIR、TIPO 等高级能力仅作为可选适配。"
 version = "0.9.7"
 license = { file = "LICENSE" }
 dependencies = []

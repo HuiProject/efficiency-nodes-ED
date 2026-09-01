@@ -722,9 +722,9 @@
 
    [**ComfyUI_UltimateSDUpscale**](https://github.com/ssitu/ComfyUI_UltimateSDUpscale)  (Optional)
 
-   [**rgthree-comfy**](https://github.com/rgthree/rgthree-comfy)  (Absolutely Required!)
+   [**rgthree-comfy**](https://github.com/rgthree/rgthree-comfy)  (Optional compatibility adapters only)
 
-   [**efficiency-nodes-comfyui**](https://github.com/jags111/efficiency-nodes-comfyui)  (Absolutely Required!)
+   [**efficiency-nodes-comfyui**](https://github.com/jags111/efficiency-nodes-comfyui)  (Optional legacy workflow compatibility only)
 
    [**efficiency-nodes-ED**](https://github.com/NyaamZ/efficiency-nodes-ED)  (This Nodes)
 

@@ -18,7 +18,6 @@ from functools import reduce # For regional ED
 # Get the absolute path of various directories
 my_dir = os.path.dirname(os.path.abspath(__file__))
 custom_nodes_dir = os.path.abspath(os.path.join(my_dir, '..'))
-efficiency_nodes_dir = os.path.abspath(os.path.join(custom_nodes_dir, 'efficiency-nodes-comfyui'))
 comfy_dir = os.path.abspath(os.path.join(my_dir, '..', '..'))
 
 # Append comfy_dir to sys.path & import files
@@ -37,9 +36,11 @@ except ImportError:
 
 sys.path.remove(comfy_dir)
 
-sys.path.append(efficiency_nodes_dir)
-from tsc_utils import *
-sys.path.remove(efficiency_nodes_dir)
+# ED 自带工具实现，避免运行时导入 efficiency-nodes-comfyui。
+try:
+    from .core.tsc_utils import *
+except ImportError:
+    from core.tsc_utils import *
 
 # Append custom_nodes_dir to sys.path
 sys.path.append(custom_nodes_dir)
@@ -151,17 +152,11 @@ class ED_Util:
 
     @staticmethod
     def try_install_custom_node(extension_name, custom_node_url):
-        msg = f"To use this node, '{extension_name}' extension is required."
-        
-        try:
-            import cm_global
-            cm_global.try_call(api='cm.try-install-custom-node',
-                               sender="Efficiency Nodes 💬ED", custom_node_url=custom_node_url, msg=msg)
-        except Exception as e:
-            print(msg)
-            print(f"Efficiency Nodes ED - ComfyUI-Manager is outdated. The custom node installation feature is not available.")
-            
-        raise Exception(f"[ERROR] To use this node, you need to install '{extension_name}'")
+        # 【独立运行】ED 不再通过 ComfyUI-Manager 自动安装或调用外部插件。
+        raise RuntimeError(
+            f"[ED-OPTIONAL] {extension_name} 未启用。该功能是可选适配器，"
+            "请单独安装对应插件后重试；ED 不会修改其他插件目录。"
+        )
 
     @staticmethod
     def get_image_size(image):
@@ -1782,6 +1777,19 @@ class TIPOScript_ED:
 # SAMPLER
 ##############################################################################################################
 # KSampler (Efficient) ED
+def _ed_core_sample(model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
+                    latent_image, denoise=1.0, vae=None, vae_decode="true"):
+    """【核心采样】使用 ComfyUI 内置 KSampler，避免依赖旧 Efficiency Nodes。"""
+    latent = nodes.KSampler().sample(
+        model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
+        latent_image, denoise=denoise
+    )[0]
+    images = None
+    if vae is not None and vae_decode != "false":
+        images = ED_Util.vae_decode(vae, latent, "tiled" in str(vae_decode))
+    return {"result": (model, positive, negative, latent, vae, images), "ui": {}}
+
+
 class KSampler_ED():
     SET_SEED_CFG_SAMPLER = {
         "from node to ctx": 1,
@@ -1907,14 +1915,17 @@ class KSampler_ED():
 
         ###### KSampler (Efficient) ######
         else:
-            return_dict = NODES['KSampler (Efficient)']().sample(model, seed, steps, cfg, 
-                sampler_name, scheduler, positive, negative, latent_image, preview_method, vae_decode, 
-                denoise=denoise, prompt=prompt, extra_pnginfo=extra_pnginfo, my_unique_id=my_unique_id,
-                optional_vae=vae, script=script, add_noise=None, start_at_step=None, end_at_step=c_index,
-                return_with_leftover_noise=None, sampler_type="regular")               
+            return_dict = _ed_core_sample(
+                model, seed, steps, cfg, sampler_name, scheduler, positive, negative,
+                latent_image, denoise=denoise, vae=vae, vae_decode=vae_decode
+            )
 
             _, _, _, latent_list, _, output_images = return_dict["result"]
             result_ui = return_dict["ui"]
+            if output_images is not None:
+                result_ui = nodes.PreviewImage().save_images(
+                    output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
+                )["ui"]
 
         ###### Refiner Script ######
         if refiner_script:            
@@ -2256,13 +2267,17 @@ class KSamplerTEXT_ED():
         positive_encoded = nodes.CLIPTextEncode().encode(clip, positive)[0]
         negative_encoded = nodes.CLIPTextEncode().encode(clip, negative)[0]
         
-        return_dict = NODES['KSampler (Efficient)']().sample(model, seed, steps, cfg, sampler_name, scheduler, 
-                positive_encoded, negative_encoded, latent_image, preview_method, vae_decode, denoise=denoise, prompt=prompt, 
-                extra_pnginfo=extra_pnginfo, my_unique_id=my_unique_id,
-                optional_vae=vae, script=script, add_noise=add_noise, start_at_step=start_at_step, end_at_step=end_at_step,
-                return_with_leftover_noise=return_with_leftover_noise, sampler_type="regular")                        
+        return_dict = _ed_core_sample(
+                model, seed, steps, cfg, sampler_name, scheduler,
+                positive_encoded, negative_encoded, latent_image, denoise=denoise,
+                vae=vae, vae_decode=vae_decode
+        )
 
         _, _, _, latent_list, _, output_images = return_dict["result"]
+        if output_images is not None:
+            result_ui = nodes.PreviewImage().save_images(
+                output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
+            )["ui"]
                         
         context = new_context_ed(context, latent=latent_list, images=output_images)                                
         return (context, output_images)
@@ -2960,8 +2975,7 @@ SUPIR Tiles -node for preview to understand how the image is tiled.
 # NODE MAPPING
 ##############################################################################################################
 
-# Power Lora Loader 的 ED 兼容副本：保留原 MODEL/CLIP 行为并额外导出标准 LORA_STACK。
-_POWER_LORA_BASE = NODES.get("Power Lora Loader (rgthree)")
+# Power Lora Loader 的 ED 原生实现：不继承、不查找 rgthree。
 class _FlexibleLoraInputs(dict):
     """允许前端动态提交 lora_1、lora_2 等 Power Loader 参数。"""
     def __getitem__(self, key):
@@ -2969,81 +2983,47 @@ class _FlexibleLoraInputs(dict):
     def __contains__(self, key):
         return True
 
-if _POWER_LORA_BASE is not None:
-    class PowerLoraLoaderStackED(_POWER_LORA_BASE):
-        RETURN_TYPES = ("RGTHREE_CONTEXT", "ED_LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
-        RETURN_NAMES = ("CONTEXT", "LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
-        CATEGORY = "Efficiency Nodes/Loaders"
+class PowerLoraLoaderStackED:
+    RETURN_TYPES = ("RGTHREE_CONTEXT", "ED_LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
+    RETURN_NAMES = ("CONTEXT", "LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
+    CATEGORY = "Efficiency Nodes/Loaders"
+    FUNCTION = "load_loras"
 
-        def load_loras(self, model=None, clip=None, **kwargs):
-            base_model, base_clip = model, clip
-            result = super().load_loras(model=model, clip=clip, **kwargs)
-            # [XY-DEBUG] 保留同一加载器的未套 LoRA 基础对象，供 XY 网格逐格重建。
-            # 普通流程继续使用 result 中已套用 LoRA 的 MODEL/CLIP，不改变既有行为。
-            loaded_model, loaded_clip = result[0], result[1]
-            try:
-                setattr(loaded_model, "_xy_base_model", base_model)
-            except Exception:
-                pass
-            try:
-                setattr(loaded_clip, "_xy_base_clip", base_clip)
-            except Exception:
-                pass
-            stack = []
-            for key, value in kwargs.items():
-                if not key.upper().startswith("LORA_") or not isinstance(value, dict):
-                    continue
-                if not value.get("on") or not value.get("lora"):
-                    continue
-                model_strength = float(value.get("strength", 0.0))
-                clip_strength = value.get("strengthTwo", model_strength)
-                clip_strength = model_strength if clip_strength is None else float(clip_strength)
-                stack.append((value["lora"], model_strength, clip_strength))
-            print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
-            lora_pipe = EDLoraPipe(base_model, base_clip, loaded_model, loaded_clip, stack)
-            context = new_context_ed(None, model=loaded_model, clip=loaded_clip, lora_pipe=lora_pipe)
-            print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
-            return (context, lora_pipe, loaded_model, loaded_clip, stack)
-else:
-    class PowerLoraLoaderStackED:
-        RETURN_TYPES = ("RGTHREE_CONTEXT", "ED_LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
-        RETURN_NAMES = ("CONTEXT", "LORA_PIPE", "MODEL", "CLIP", "LORA_STACK")
-        CATEGORY = "Efficiency Nodes/Loaders"
-        FUNCTION = "load_loras"
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}, "optional": _FlexibleLoraInputs({"model": ("MODEL",), "clip": ("CLIP",)})}
 
-        @classmethod
-        def INPUT_TYPES(cls):
-            return {"required": {}, "optional": _FlexibleLoraInputs({"model": ("MODEL",), "clip": ("CLIP",)})}
-
-        def load_loras(self, model=None, clip=None, **kwargs):
-            base_model, base_clip = model, clip
-            stack = []
-            for key, value in kwargs.items():
-                if not key.upper().startswith("LORA_") or not isinstance(value, dict) or not value.get("on"):
-                    continue
-                name = value.get("lora")
-                if not name:
-                    continue
-                sm = float(value.get("strength", 0.0))
-                sc = value.get("strengthTwo", sm)
-                sc = sm if sc is None else float(sc)
-                stack.append((name, sm, sc))
-                if sm != 0 or sc != 0:
-                    path = folder_paths.get_full_path("loras", name)
-                    model, clip = comfy.sd.load_lora_for_models(model, clip, comfy.utils.load_torch_file(path), sm, sc)
-            print(f"[XY-DEBUG] Power Loader ED stack ({len(stack)}): {stack}")
+    def load_loras(self, model=None, clip=None, **kwargs):
+        base_model, base_clip = model, clip
+        stack = []
+        for key, value in kwargs.items():
+            if not key.upper().startswith("LORA_") or not isinstance(value, dict):
+                continue
+            name = value.get("lora")
+            if not value.get("on") or not name:
+                continue
+            sm = float(value.get("strength", 0.0))
+            sc = value.get("strengthTwo", sm)
+            sc = sm if sc is None else float(sc)
+            stack.append((name, sm, sc))
+            if (sm != 0 or sc != 0) and model is not None:
+                if os.path.isabs(str(name)):
+                    lora, metadata = comfy.utils.load_torch_file(str(name), safe_load=True, return_metadata=True)
+                    model, clip = comfy.sd.load_lora_for_models(
+                        model, clip, lora, sm, sc, lora_metadata=metadata
+                    )
+                else:
+                    model, clip = nodes.LoraLoader().load_lora(model, clip, name, sm, sc)
+        print(f"[ED-CORE] Power Loader stack count={len(stack)}: {stack}")
+        for obj, attr, value in ((model, "_xy_base_model", base_model), (clip, "_xy_base_clip", base_clip)):
             try:
-                setattr(model, "_xy_base_model", base_model)
+                setattr(obj, attr, value)
             except Exception:
                 pass
-            try:
-                setattr(clip, "_xy_base_clip", base_clip)
-            except Exception:
-                pass
-            lora_pipe = EDLoraPipe(base_model, base_clip, model, clip, stack)
-            context = new_context_ed(None, model=model, clip=clip, lora_pipe=lora_pipe)
-            print(f"[XY-ED-V2] Power Loader pipe stack={lora_pipe.fingerprint}, count={len(stack)}")
-            return (context, lora_pipe, model, clip, stack)
+        lora_pipe = EDLoraPipe(base_model, base_clip, model, clip, stack)
+        context = new_context_ed(None, model=model, clip=clip, lora_pipe=lora_pipe)
+        print(f"[ED-CORE] Power Loader fingerprint={lora_pipe.fingerprint}; external plugin dependency: none")
+        return (context, lora_pipe, model, clip, stack)
 
 
 # <1> 创建 ED 原生 LoRA 扫描计划；该节点不加载模型，也不编码提示词。
