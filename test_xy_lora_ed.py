@@ -1,6 +1,8 @@
 import unittest
 
-from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
+from xy_lora_ed import (EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue,
+                         combine_sweep_stacks, generate_sweep_values,
+                         stack_fingerprint, normalize_sweep_rows)
 
 
 class TestEDLoraSweep(unittest.TestCase):
@@ -62,6 +64,28 @@ class TestEDLoraSweep(unittest.TestCase):
             ("Anima\\first.safetensors", 0.6, 0.6),
             ("Anima\\target.safetensors", 0.8, 0.8),
         ])
+
+    def test_normalize_rows_ignores_rows_outside_count(self):
+        count, rows = normalize_sweep_rows(1, {
+            "scan_lora_name_1": "Anima\\first.safetensors",
+            "scan_lora_1_toggle": True,
+            "scan_lora_first_strength_1": 0.25,
+            "scan_lora_last_strength_1": 0.75,
+            "scan_lora_name_2": "Anima\\target.safetensors",
+        })
+        self.assertEqual(count, 1)
+        self.assertEqual(rows, [("Anima\\first.safetensors", 0.25, 0.75)])
+
+    def test_normalize_rows_skips_disabled_and_empty(self):
+        count, rows = normalize_sweep_rows(3, {
+            "scan_lora_name_1": "None",
+            "scan_lora_name_2": "Anima\\target.safetensors",
+            "scan_lora_2_toggle": False,
+            "scan_lora_name_3": "Anima\\last.safetensors",
+            "scan_lora_3_toggle": True,
+        })
+        self.assertEqual(count, 3)
+        self.assertEqual(rows, [("Anima\\last.safetensors", 0.5, 1.0)])
 
 
 if __name__ == "__main__":

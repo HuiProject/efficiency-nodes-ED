@@ -30,9 +30,9 @@ import comfy.sd
 import comfy.utils
 
 try:
-    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
+    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 except ImportError:
-    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint
+    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 
 sys.path.remove(comfy_dir)
 
@@ -3028,7 +3028,9 @@ class PowerLoraLoaderStackED:
 
 # <1> 创建 ED 原生 LoRA 扫描计划；该节点不加载模型，也不编码提示词。
 class EDLoraSweep:
-    MAX_SCAN_LORAS = 9
+    # Rows are created by the frontend only when requested. Keeping this as a
+    # limit (rather than pre-registering inputs) avoids a permanently tall node.
+    MAX_SCAN_LORAS = 50
     @classmethod
     def INPUT_TYPES(cls):
         inputs = {
@@ -3036,22 +3038,18 @@ class EDLoraSweep:
                 "lora_pipe": ("ED_LORA_PIPE",),
                 "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
                 "axis": (["X", "Y"], {"default": "X"}),
-                # Compatibility field for old workflows; the UI hides it and
-                # replaces it with stack-scoped rows below.
-                "target_lora": (["None"],),
+                # Legacy single-target fields stay in the contract for saved
+                # workflows; the dynamic frontend hides them on screen.
+                "target_lora": (["None"] + folder_paths.get_filename_list("loras"),),
                 "first_strength": ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "lora_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_SCAN_LORAS, "step": 1}),
             },
-            # Fixed stacker-style rows are hidden/shown by lora_count.
+            # Dynamic row widgets are optional wildcard inputs. They are not
+            # part of INPUT_TYPES until the user creates the corresponding UI
+            # row, matching the runtime shape of a Stacker node.
             "optional": _FlexibleLoraInputs({"script": ("SCRIPT",)}),
         }
-
-        for i in range(1, cls.MAX_SCAN_LORAS + 1):
-            inputs["required"][f"scan_lora_name_{i}"] = (["None"],)
-            inputs["required"][f"scan_lora_{i}_toggle"] = ("BOOLEAN", {"default": True})
-            inputs["required"][f"scan_lora_first_strength_{i}"] = ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01})
-            inputs["required"][f"scan_lora_last_strength_{i}"] = ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01})
         return inputs
 
     RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN", "XY")
@@ -3059,20 +3057,13 @@ class EDLoraSweep:
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
-    def build_plan(self, lora_pipe, batch_count, axis="X", target_lora=None,
-                   first_strength=0.5, last_strength=1.0, lora_count=0,
+    def build_plan(self, lora_pipe, batch_count, axis="X", lora_count=0,
+                   target_lora=None, first_strength=0.5, last_strength=1.0,
                    script=None, **kwargs):
         rows = []
-        # Stacker-style fixed rows are the canonical contract. Only the first
-        # lora_count rows are read, so hidden rows cannot leak into execution.
-        count = max(0, min(int(lora_count or 0), self.MAX_SCAN_LORAS))
-        for i in range(1, count + 1):
-            name = kwargs.get(f"scan_lora_name_{i}")
-            toggle = kwargs.get(f"scan_lora_{i}_toggle", True)
-            first = kwargs.get(f"scan_lora_first_strength_{i}", 0.5)
-            last = kwargs.get(f"scan_lora_last_strength_{i}", 1.0)
-            if toggle and name not in (None, "", "None"):
-                rows.append((str(name), float(first), float(last)))
+        # Stacker-style dynamic rows are the canonical contract. Only the
+        # rows created by the frontend up to lora_count are read.
+        count, rows = normalize_sweep_rows(lora_count, kwargs, self.MAX_SCAN_LORAS)
         print(f"[XY-ED-STACKER] count={count}, enabled_rows={rows}")
 
         # Compatibility with pre-stacker workflows that submitted dynamic row

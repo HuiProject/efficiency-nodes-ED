@@ -25,6 +25,26 @@ def stack_fingerprint(stack):
     return hashlib.sha256(encoded).hexdigest()[:12]
 
 
+def normalize_sweep_rows(lora_count, row_values, max_rows=50):
+    """Read only the active Stacker-style rows from a node input mapping.
+
+    ``row_values`` is deliberately a plain mapping so the UI contract can be
+    tested without importing ComfyUI. Hidden or stale rows outside count are
+    ignored, and disabled/empty rows do not enter the sweep plan.
+    """
+    count = max(0, min(int(lora_count or 0), int(max_rows)))
+    rows = []
+    for index in range(1, count + 1):
+        name = row_values.get(f"scan_lora_name_{index}")
+        enabled = row_values.get(f"scan_lora_{index}_toggle", True)
+        if not enabled or name in (None, "", "None"):
+            continue
+        first = row_values.get(f"scan_lora_first_strength_{index}", 0.5)
+        last = row_values.get(f"scan_lora_last_strength_{index}", 1.0)
+        rows.append((str(name), float(first), float(last)))
+    return count, rows
+
+
 # <3> 保存 Power Loader 的基础对象、应用后对象和有序参数栈。
 class EDLoraPipe:
     def __init__(self, base_model, base_clip, applied_model, applied_clip, stack):

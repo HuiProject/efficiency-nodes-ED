@@ -44,9 +44,6 @@ const NODE_WIDGET_HANDLERS = {
         'input_mode': handleLoRAStackerEDInputMode,
         'lora_count': handleLoRAStackerEDLoraCount
     },
-    "XY Input: LoRA Sweep 💬ED": {
-        'lora_count': handleEDLoraSweepCount
-    },
     "SUPIR Sampler 💬ED": {
         'set_seed_cfg_sampler': handleEfficientSamplerSetSeed_ED
     },
@@ -476,129 +473,6 @@ function handleLoRAStackerEDLoraCount(node, widget) {
     node.setDirtyCanvas(true, true);
 }
 
-// Keep the optional multi-LoRA sweep rows aligned with the selected count.
-function handleEDLoraSweepCount(node, widget) {
-    const count = Math.max(0, Math.min(9, Number(widget.value) || 0));
-    if (node.__edSweepAppliedCount === count && !node.__edSweepNeedsLayout) return;
-    node.__edSweepAppliedCount = count;
-    node.__edSweepNeedsLayout = false;
-    // The legacy single-target controls remain available to old workflows but
-    // are hidden once Add Lora mode is active.
-    const multiMode = count > 0;
-    toggleWidget(node, findWidgetByName(node, "target_lora"), !multiMode);
-    toggleWidget(node, findWidgetByName(node, "first_strength"), !multiMode);
-    toggleWidget(node, findWidgetByName(node, "last_strength"), !multiMode);
-    // Keep the count control visible so rows can be changed without a hidden
-    // widget trapping the user in the previous layout.
-    toggleWidget(node, widget, true);
-    for (let i = 1; i <= 9; i++) {
-        const name = findWidgetByName(node, `scan_lora_name_${i}`);
-        const toggle = findWidgetByName(node, `scan_lora_${i}_toggle`);
-        const first = findWidgetByName(node, `scan_lora_first_strength_${i}`);
-        const last = findWidgetByName(node, `scan_lora_last_strength_${i}`);
-        const visible = i <= count;
-        forceWidgetVisibility(node, name, visible);
-        forceWidgetVisibility(node, toggle, visible);
-        forceWidgetVisibility(node, first, visible);
-        forceWidgetVisibility(node, last, visible);
-        if (!visible && name) name.value = "None";
-    }
-    updateNodeHeight(node);
-    node.setDirtyCanvas(true, true);
-}
-
-function getConnectedLoraNames(node) {
-    const linkId = node.inputs?.find(input => input.name === "lora_pipe")?.link;
-    const link = linkId != null ? app.graph.links[linkId] : null;
-    const origin = link ? node.graph.getNodeById(link.origin_id) : null;
-    if (!origin) return null;
-    const names = [];
-    for (const widget of origin.widgets || []) {
-        const value = widget.value;
-        if (value && typeof value === "object" && value.lora && !names.includes(value.lora)) {
-            names.push(value.lora);
-        }
-    }
-    return names.length ? ["None", ...names] : null;
-}
-
-function restrictSweepLoraCombos(node) {
-    const names = getConnectedLoraNames(node);
-    if (!names) return;
-    for (let i = 1; i <= 9; i++) {
-        const widget = findWidgetByName(node, `scan_lora_name_${i}`);
-        if (!widget) continue;
-        widget.options = widget.options || {};
-        widget.options.values = names;
-        if (!names.includes(widget.value)) widget.value = "None";
-    }
-    const legacy = findWidgetByName(node, "target_lora");
-    if (legacy) {
-        legacy.options = legacy.options || {};
-        legacy.options.values = names;
-        if (!names.includes(legacy.value)) legacy.value = names[1] || "None";
-    }
-}
-
-function isEDLoraSweepNode(node) {
-    const values = [node?.comfyClass, node?.type, node?.title,
-        node?.properties?.["Node name for S&R"]];
-    return values.some(value => String(value || "").includes("LoRA Sweep"));
-}
-
-function initEDLoraSweepUI(node) {
-    if (!isEDLoraSweepNode(node)) return;
-    const legacyName = findWidgetByName(node, "target_lora")?.value;
-    const legacy = findWidgetByName(node, "target_lora");
-    if (legacy && legacyName && !legacy.value) legacy.value = legacyName;
-    const count = findWidgetByName(node, "lora_count");
-    if (count) handleEDLoraSweepCount(node, count);
-    node.setSize([node.size[0], node.computeSize()[1]]);
-    restrictSweepLoraCombos(node);
-    if (!node.__edSweepConnectionBound) {
-        node.__edSweepConnectionBound = true;
-        const oldConnectionsChange = node.onConnectionsChange;
-        node.onConnectionsChange = function () {
-            const result = oldConnectionsChange?.apply(this, arguments);
-            this.__edSweepNeedsLayout = true;
-            restrictSweepLoraCombos(this);
-            return result;
-        };
-    }
-    if (!node.__edSweepLayoutGuard) {
-        node.__edSweepLayoutGuard = true;
-        const originalDraw = node.onDrawForeground;
-        node.onDrawForeground = function (ctx) {
-            const countWidget = findWidgetByName(this, "lora_count");
-            if (countWidget) handleEDLoraSweepCount(this, countWidget);
-            return originalDraw?.apply(this, arguments);
-        };
-    }
-    node.setDirtyCanvas(true, true);
-}
-
-// ComfyUI 0.3+ renders `hidden` widgets independently of widget.type. This
-// fallback is required when another extension has replaced computeSize/type.
-function forceWidgetVisibility(node, widget, visible) {
-    if (!widget) return;
-    widget.hidden = !visible;
-    toggleWidget(node, widget, visible);
-    if (!visible) widget.computeSize = () => [0, -4];
-}
-
-function addEDLoraSweepRow(node) {
-    const rows = node.widgets.filter(widget => /^scan_lora_name_\d+$/.test(widget.name || ""));
-    const next = rows.length + 1;
-    if (next > 9) return;
-    const names = getConnectedLoraNames(node) || ["None"];
-    node.addWidget("combo", `scan_lora_name_${next}`, names, "None");
-    node.addWidget("toggle", `scan_lora_${next}_toggle`, true);
-    node.addWidget("number", `scan_lora_first_strength_${next}`, 0.5, null, { min: -10, max: 10, step: 0.01 });
-    node.addWidget("number", `scan_lora_last_strength_${next}`, 1.0, null, { min: -10, max: 10, step: 0.01 });
-    node.setSize([node.size[0], node.computeSize()[1]]);
-    node.setDirtyCanvas(true, true);
-}
-
 // Embedding Stacker ED Handlers
 function handleEmbeddingStacker(node, widget) {
     const posORneg = widget.name.substr(0, 3);
@@ -643,7 +517,6 @@ app.registerExtension({
         edComboWidget_Init(node);
         getBooruTagRegionalScript_Init(node);
         applyWidgetLogic_Init(node);
-        initEDLoraSweepUI(node);
     },
 
     async afterConfigureGraph() {
@@ -655,39 +528,8 @@ app.registerExtension({
                 }
             });
         });
-        // Existing workflow nodes may be restored before extension nodeCreated hooks;
-        // initialize the compact sweep UI after graph deserialization as well.
-        app.graph._nodes.forEach(node => initEDLoraSweepUI(node));
-
         setTimeout(() => {
             dynamicWidgets_initialized = true;
         }, 1000);
     },
 });
-
-// Power Loader rows can be added after the graph is already connected. Keep
-// Sweep choices synchronized without mutating node widgets or creating DOM
-// overlays; the fixed row values remain owned by LiteGraph.
-let edSweepRefreshTimer = null;
-function scheduleSweepStackRefresh() {
-    if (edSweepRefreshTimer !== null) return;
-    edSweepRefreshTimer = setTimeout(() => {
-        edSweepRefreshTimer = null;
-        for (const node of app.graph?._nodes || []) {
-            if (isEDLoraSweepNode(node)) restrictSweepLoraCombos(node);
-        }
-    }, 250);
-}
-
-app.registerExtension({
-    name: "ED.LoRASweepStackSync",
-    nodeCreated(node) {
-        if (!isEDLoraSweepNode(node)) return;
-        scheduleSweepStackRefresh();
-    },
-    async afterConfigureGraph() {
-        scheduleSweepStackRefresh();
-    },
-});
-
-setInterval(scheduleSweepStackRefresh, 1000);
