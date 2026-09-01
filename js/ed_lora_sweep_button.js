@@ -60,18 +60,40 @@ function menuEvent(node, callbackArgs = []) {
 
 function addRowWithChooser(node, callbackArgs) {
     const names = stackNames(node) || ["None"];
-    new LiteGraph.ContextMenu(names, {
-        event: menuEvent(node, callbackArgs),
-        title: "Choose a LoRA from Power Loader",
-        className: "dark",
-        callback: (value) => {
-        const selected = typeof value === "string" ? value : value?.content;
-        if (selected && selected !== "None") {
-            addRow(node, selected);
-            node.setDirtyCanvas(true, true);
-        }
-        },
+    const selectedEvent = menuEvent(node, callbackArgs);
+    const picker = document.createElement("select");
+    picker.className = "ed-lora-sweep-picker";
+    picker.setAttribute("aria-label", "Choose a LoRA from Power Loader");
+    for (const name of names) {
+        const option = document.createElement("option");
+        option.value = name;
+        option.textContent = name;
+        picker.appendChild(option);
+    }
+    picker.style.position = "fixed";
+    picker.style.left = `${Math.max(4, selectedEvent.clientX)}px`;
+    picker.style.top = `${Math.max(4, selectedEvent.clientY)}px`;
+    picker.style.zIndex = "100000";
+    picker.style.minWidth = "280px";
+    picker.style.maxWidth = "min(520px, 80vw)";
+    picker.style.background = "#202226";
+    picker.style.color = "#f0f0f0";
+    picker.style.border = "1px solid #777";
+    picker.style.padding = "4px";
+    picker.style.fontSize = "14px";
+    const close = () => picker.remove();
+    picker.addEventListener("change", () => {
+        const selected = picker.value;
+        console.debug("[ED-UI] LoRA Sweep selected", { node: node.id, selected });
+        if (selected && selected !== "None") addRow(node, selected);
+        close();
     });
+    picker.addEventListener("blur", () => setTimeout(close, 150));
+    document.body.appendChild(picker);
+    picker.focus();
+    // Opening the native select is browser-controlled; focus guarantees that
+    // keyboard selection and the change event work across ComfyUI frontends.
+    picker.click();
 }
 
 function hasSweepAddButton(node) {
