@@ -34,21 +34,39 @@ function addRow(node, name) {
 function install(node) {
     if (!isSweep(node) || find(node,"ed_add_lora_sweep")) return;
     let chooser;
-    chooser = node.addWidget("combo", "➕ Add Lora", namesFromPipe(node), "None", value => {
-        console.debug("[ED-UI] LoRA Sweep chooser changed", {node:node.id,value});
-        addRow(node, value);
-        chooser.value = "None";
+    const button = node.addWidget("button", "➕ Add Lora", null, () => {
+        chooser.hidden = !chooser.hidden;
+        if (chooser.hidden) chooser.computeSize = () => [0, -4];
+        else delete chooser.computeSize;
+        node.setSize([node.size[0], node.computeSize()[1]]);
         node.setDirtyCanvas(true, true);
+        console.debug("[ED-UI] LoRA Sweep Add Lora button", {node:node.id, opened:!chooser.hidden});
     });
-    chooser.name = "ed_add_lora_sweep";
+    button.name = "ed_add_lora_sweep";
+    button.serialize = false;
+    button.__edSweepAddButton = true;
+    chooser = node.addWidget("combo", "Select LoRA", namesFromPipe(node), "None", value => {
+        console.debug("[ED-UI] LoRA Sweep chooser changed", {node:node.id,value});
+        if (value && value !== "None") {
+            addRow(node, value);
+            chooser.value = "None";
+            chooser.hidden = true;
+            chooser.computeSize = () => [0, -4];
+            node.setSize([node.size[0], node.computeSize()[1]]);
+            node.setDirtyCanvas(true, true);
+        }
+    });
+    chooser.name = "ed_lora_sweep_pending";
     chooser.serialize = false;
+    chooser.hidden = true;
+    chooser.computeSize = () => [0, -4];
     chooser.options = chooser.options || {};
     chooser.options.serialize = false;
     node.__edSweepChooser = chooser;
 }
 
 function refresh(node) {
-    const chooser = node.__edSweepChooser || find(node,"ed_add_lora_sweep");
+    const chooser = node.__edSweepChooser || find(node,"ed_lora_sweep_pending");
     if (!chooser) return;
     const names = namesFromPipe(node);
     chooser.options ||= {};
