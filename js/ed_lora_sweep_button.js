@@ -1,155 +1,67 @@
 import { app } from "../../../scripts/app.js";
 
-const isSweep = (data) => String(data?.name || "").includes("LoRA Sweep");
-const find = (node, name) => (node.widgets || []).find(w => w.name === name);
-const isSweepNode = (node) => [node?.type, node?.comfyClass, node?.title,
-    node?.properties?.["Node name for S&R"]].some(v => String(v || "").includes("LoRA Sweep"));
+const isSweep = n => [n?.type,n?.comfyClass,n?.title,n?.properties?.["Node name for S&R"]].some(v => String(v||"").includes("LoRA Sweep"));
+const find = (n, name) => (n.widgets||[]).find(w => w.name === name);
 
-function stackNames(node) {
-    const input = (node.inputs || []).find(i => i.name === "lora_pipe");
+function namesFromPipe(node) {
+    const input = (node.inputs||[]).find(i => i.name === "lora_pipe");
     const link = input?.link != null ? app.graph.links[input.link] : null;
     const origin = link ? app.graph.getNodeById(link.origin_id) : null;
-    if (!origin) return null;
-    const result = [];
-    for (const w of origin.widgets || []) {
+    if (!origin) return ["None"];
+    const names = [];
+    for (const w of origin.widgets||[]) {
         const v = w.value;
-        if (v && typeof v === "object" && v.lora && !result.includes(v.lora)) result.push(v.lora);
+        if (v && typeof v === "object" && v.lora && !names.includes(v.lora)) names.push(v.lora);
     }
-    return result.length ? result : null;
+    return ["None", ...names];
 }
 
-function refreshTarget(node) {
-    const names = stackNames(node);
-    const target = find(node, "target_lora");
-    if (!target || !names) {
-        console.debug("[ED LoRA Sweep] waiting for connected Power Loader stack", {
-            node: node.id, hasTarget: !!target, names: names?.length || 0,
-        });
-        return;
-    }
-    target.options ||= {};
-    target.options.values = ["None", ...names];
-    if (!names.includes(target.value)) target.value = names[0];
-    node.setDirtyCanvas(true, true);
-}
-
-function addRow(node, selectedName = "None") {
-    const index = 1 + (node.widgets || []).filter(w => /^scan_lora_name_\d+$/.test(w.name || "")).length;
+function addRow(node, name) {
+    if (!name || name === "None") return;
+    const rows = (node.widgets||[]).filter(w => /^scan_lora_name_\d+$/.test(w.name||""));
+    const index = rows.length + 1;
     if (index > 9) return;
-    const names = stackNames(node) || ["None"];
-    node.addWidget("combo", `scan_lora_name_${index}`, names, names.includes(selectedName) ? selectedName : names[0]);
+    const names = namesFromPipe(node);
+    node.addWidget("combo", `scan_lora_name_${index}`, names, name);
     node.addWidget("toggle", `scan_lora_${index}_toggle`, true);
     node.addWidget("number", `scan_lora_first_strength_${index}`, 0.5, null, {min:-10,max:10,step:0.01});
     node.addWidget("number", `scan_lora_last_strength_${index}`, 1.0, null, {min:-10,max:10,step:0.01});
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
-};
-
-function menuEvent(node, callbackArgs = []) {
-    // LiteGraph button callbacks differ between frontend versions. Only accept
-    // an actual pointer event; canvas/node arguments previously caused (0, 0)
-    // menus and swallowed the selection callback.
-    const pointer = callbackArgs.find((value) => value &&
-        Number.isFinite(value.clientX) && Number.isFinite(value.clientY));
-    if (pointer) return pointer;
-    const last = app.canvas?.last_mouse_event || app.canvas?.lastMouseEvent;
-    if (last && Number.isFinite(last.clientX) && Number.isFinite(last.clientY)) return last;
-    const rect = app.canvas?.canvas?.getBoundingClientRect?.();
-    return rect ? { clientX: rect.left + 24, clientY: rect.top + 24 } : { clientX: 24, clientY: 24 };
+    console.debug("[ED-UI] LoRA Sweep row added", {node:node.id,index,name});
 }
 
-function addRowWithChooser(node, callbackArgs) {
-    const names = stackNames(node) || ["None"];
-    const selectedEvent = menuEvent(node, callbackArgs);
-    const picker = document.createElement("select");
-    picker.className = "ed-lora-sweep-picker";
-    picker.setAttribute("aria-label", "Choose a LoRA from Power Loader");
-    for (const name of names) {
-        const option = document.createElement("option");
-        option.value = name;
-        option.textContent = name;
-        picker.appendChild(option);
-    }
-    picker.style.position = "fixed";
-    picker.style.left = `${Math.max(4, selectedEvent.clientX)}px`;
-    picker.style.top = `${Math.max(4, selectedEvent.clientY)}px`;
-    picker.style.zIndex = "100000";
-    picker.style.minWidth = "280px";
-    picker.style.maxWidth = "min(520px, 80vw)";
-    picker.style.background = "#202226";
-    picker.style.color = "#f0f0f0";
-    picker.style.border = "1px solid #777";
-    picker.style.padding = "4px";
-    picker.style.fontSize = "14px";
-    const close = () => picker.remove();
-    picker.addEventListener("change", () => {
-        const selected = picker.value;
-        console.debug("[ED-UI] LoRA Sweep selected", { node: node.id, selected });
-        if (selected && selected !== "None") addRow(node, selected);
-        close();
+function install(node) {
+    if (!isSweep(node) || find(node,"ed_add_lora_sweep")) return;
+    let chooser;
+    chooser = node.addWidget("combo", "➕ Add Lora", namesFromPipe(node), "None", value => {
+        console.debug("[ED-UI] LoRA Sweep chooser changed", {node:node.id,value});
+        addRow(node, value);
+        chooser.value = "None";
+        node.setDirtyCanvas(true, true);
     });
-    picker.addEventListener("blur", () => setTimeout(close, 150));
-    document.body.appendChild(picker);
-    picker.focus();
-    // Opening the native select is browser-controlled; focus guarantees that
-    // keyboard selection and the change event work across ComfyUI frontends.
-    picker.click();
+    chooser.name = "ed_add_lora_sweep";
+    chooser.serialize = false;
+    chooser.options = chooser.options || {};
+    chooser.options.serialize = false;
+    node.__edSweepChooser = chooser;
 }
 
-function hasSweepAddButton(node) {
-    return (node.widgets || []).some(widget => widget.__edSweepAddButton === true);
+function refresh(node) {
+    const chooser = node.__edSweepChooser || find(node,"ed_add_lora_sweep");
+    if (!chooser) return;
+    const names = namesFromPipe(node);
+    chooser.options ||= {};
+    chooser.options.values = names;
+    if (!names.includes(chooser.value)) chooser.value = "None";
 }
 
-function installSweepAddButton(node) {
-    if (hasSweepAddButton(node)) return;
-    const button = node.addWidget("button", "➕ Add Lora", null,
-        (...args) => addRowWithChooser(node, args), { serialize: false });
-    // Use an object marker instead of the display label. ComfyUI may normalize
-    // button names, so checking `widget.name` was not stable.
-    button.__edSweepAddButton = true;
-}
-
-app.registerExtension({
-    name: "ED.StandaloneLoRASweepButton",
-    async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (!isSweep(nodeData)) return;
-        const original = nodeType.prototype.onNodeCreated;
-        nodeType.prototype.onNodeCreated = function () {
-            original?.apply(this, arguments);
-            installSweepAddButton(this);
-            refreshTarget(this);
-            const old = this.onConnectionsChange;
-            if (!this.__edSweepStandaloneBound) {
-                this.__edSweepStandaloneBound = true;
-                this.onConnectionsChange = function () {
-                    const result = old?.apply(this, arguments);
-                    refreshTarget(this);
-                    return result;
-                };
-            }
-            this.setDirtyCanvas(true, true);
-        };
-    },
-    nodeCreated(node) {
-        ensureSweepNode(node);
-    },
-    afterConfigureGraph() {
-        for (const node of app.graph?._nodes || []) ensureSweepNode(node);
-    },
-});
-
-function ensureSweepNode(node) {
-    if (!isSweepNode(node)) return;
-    installSweepAddButton(node);
-    refreshTarget(node);
+function ensure(node) {
+    if (!isSweep(node)) return;
+    install(node); refresh(node);
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
 }
 
-// Power Loader creates its rows dynamically, so a lightweight refresh keeps
-// existing Sweep combo boxes synchronized without requiring reconnection.
-setInterval(() => {
-    for (const node of app.graph?._nodes || []) {
-        if (String(node.type || node.comfyClass || node.title || "").includes("LoRA Sweep")) refreshTarget(node);
-    }
-}, 1000);
+app.registerExtension({name:"ED.LoRASweepNativeChooser", nodeCreated:ensure, async afterConfigureGraph(){for(const n of app.graph?._nodes||[]) ensure(n);}});
+setInterval(() => { for (const n of app.graph?._nodes||[]) if (isSweep(n)) refresh(n); }, 1000);
