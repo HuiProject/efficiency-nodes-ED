@@ -1954,17 +1954,22 @@ class KSampler_ED():
             raise ValueError("XY LoRA Sweep ED 缺少 Efficient Loader ED 的原始提示词上下文。")
 
         pipe = plan.lora_pipe
+        # ``plan.values`` is the legacy normalized index axis (0..1). The
+        # configured first/last strengths live in target specs, so resolve the
+        # same actual values used by the XY grid path before applying LoRA.
+        axis_values = plan.axis_values()
         images = []
         latents = []
         target_label = os.path.splitext(os.path.basename(plan.target_name))[0]
         print(
             f"[XY-ED-V2] execute target={plan.target_name}, cells={len(plan.values)}, "
-            f"base_stack={pipe.fingerprint}"
+            f"base_stack={pipe.fingerprint}, resolved_values="
+            f"{[axis.value for axis in axis_values]}"
         )
 
-        for cell_index, strength in enumerate(plan.values, start=1):
+        for cell_index, axis_value in enumerate(axis_values, start=1):
             # [1] 每格从 Power Loader 保存的同一基础对象开始，完整栈只应用一次。
-            final_stack = plan.stack_for_value(strength)
+            final_stack = plan.stack_for_value(axis_value.value)
             final_fingerprint = stack_fingerprint(final_stack)
             cell_model, cell_clip = ED_Util.apply_load_lora(
                 final_stack, pipe.base_model, pipe.base_clip,
@@ -1990,7 +1995,7 @@ class KSampler_ED():
             latents.append(cell_latent)
             images.append(cell_image)
             print(
-                f"[XY-ED-V2] cell={cell_index}, strength={strength:.6g}, "
+                f"[XY-ED-V2] cell={cell_index}, strength={axis_value.label}, "
                 f"stack={final_fingerprint}, conditioning={conditioning_fingerprint}, "
                 f"applied_count={len(final_stack)}, baseline_match={final_fingerprint == pipe.fingerprint}"
             )
@@ -2004,8 +2009,8 @@ class KSampler_ED():
         draw = ImageDraw.Draw(grid)
         font = ImageFont.load_default()
         offset_x = 0
-        for image, strength in zip(pil_images, plan.values):
-            label = f"{target_label}  strength={strength:.6g}"
+        for image, axis_value in zip(pil_images, axis_values):
+            label = f"{target_label}  {axis_value.label}"
             draw.text((offset_x + 8, 12), label, fill="black", font=font)
             grid.paste(image.convert("RGB"), (offset_x, header_height))
             offset_x += image.width
@@ -3092,13 +3097,14 @@ class EDLoraSweep:
         plan = EDLoraSweepPlan(lora_pipe, [item[0] for item in rows], values, target_specs=rows)
         result = dict(script or {})
         result["ed_lora_sweep_v2"] = plan
+        resolved_values = [axis_value.label for axis_value in plan.axis_values()]
         print(
-            f"[XY-ED-V2] plan targets={plan.target_names}, values={plan.values}, "
-            f"base_stack={lora_pipe.fingerprint}"
+            f"[XY-ED-V2] plan targets={plan.target_names}, normalized_values={plan.values}, "
+            f"resolved_values={resolved_values}, base_stack={lora_pipe.fingerprint}"
         )
         axis_type = "ED_LORA_SWEEP_X" if str(axis).upper() == "X" else "ED_LORA_SWEEP_Y"
         axis = (axis_type, plan.axis_values())
-        print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, values={values}")
+        print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, normalized_values={values}, resolved_values={resolved_values}")
         return (result, plan, axis)
 
 NODE_CLASS_MAPPINGS = {

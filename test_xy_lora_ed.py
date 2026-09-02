@@ -40,6 +40,26 @@ class TestEDLoraSweep(unittest.TestCase):
         self.assertEqual(plan.stack_for_value(0.0), zero_stack)
         self.assertEqual(plan.stack_for_value(0.5)[0][1:], (0.5, 0.5))
 
+    def test_single_cell_uses_configured_strength_not_normalized_index(self):
+        plan = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0],
+            target_specs=[("Anima\\target.safetensors", 1.0, 1.0)],
+        )
+        axes = plan.axis_values()
+        self.assertEqual(axes[0].value, {"anima\\target.safetensors": 1.0})
+        self.assertEqual(plan.stack_for_value(axes[0].value)[1],
+                         ("Anima\\target.safetensors", 1.0, 1.0))
+
+    def test_descending_range_preserves_user_order(self):
+        plan = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 1.0, 0.0)],
+        )
+        self.assertEqual(
+            [axis.value["anima\\target.safetensors"] for axis in plan.axis_values()],
+            [1.0, 0.0],
+        )
+
     def test_two_axes_combine_without_accumulation(self):
         x = EDLoraSweepPlan(self.pipe, "Anima\\first.safetensors", [0.5])
         y = EDLoraSweepPlan(self.pipe, "Anima\\target.safetensors", [0.25])
