@@ -20,6 +20,8 @@ ED 的核心 Loader、LoRA Stack、XY Sweep 和缓存工具必须能够在没有
 - 旧版 `XY Input: LoRA`、`XY Input: LoRA Plot`、`XY Input: Aesthetic Score` 已在
   `xy_legacy_ed.py` 注册 ED 自有实现。LoRA 轴值携带不可变栈覆盖并由 ED sampler
   统一应用；仍需在代表性旧工作流上验证 `ED_LORA_PIPE` 连接后，才能解除旧插件门槛。
+- `js/ed_legacy_xy_widgets.js` 保留 50 行序列化协议，但按 `lora_count` 和输入模式
+  动态隐藏未使用控件，避免兼容节点在 ED-only 界面恢复为固定超长布局。
 - `tools/migrate_legacy_efficiency_workflow.py` 提供非破坏迁移：默认 dry-run，只有所有节点
   均在已验证映射中时才允许 `--write` 生成新 JSON。示例产物为
   `user\\default\\workflows\\ImagesGrid\\efficiency_ED_migrated.json`。
