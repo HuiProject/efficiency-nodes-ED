@@ -41,6 +41,10 @@ try:
     from .xy_inputs_ed import NODE_CLASS_MAPPINGS as ED_XY_INPUT_MAPPINGS
 except ImportError:
     from xy_inputs_ed import NODE_CLASS_MAPPINGS as ED_XY_INPUT_MAPPINGS
+try:
+    from .legacy_compat_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_COMPAT_MAPPINGS
+except ImportError:
+    from legacy_compat_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_COMPAT_MAPPINGS
 
 sys.path.remove(comfy_dir)
 
@@ -3308,6 +3312,7 @@ if PowerLoraLoaderStackED is not None:
 # XY script composer remain usable when the legacy efficiency-nodes plugin is
 # disabled.
 NODE_CLASS_MAPPINGS.update(ED_XY_INPUT_MAPPINGS)
+NODE_CLASS_MAPPINGS.update(ED_LEGACY_COMPAT_MAPPINGS)
 
 
 
