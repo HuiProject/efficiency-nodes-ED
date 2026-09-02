@@ -33,6 +33,14 @@ try:
     from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 except ImportError:
     from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
+try:
+    from .xy_plot_ed import EDXYPlot
+except ImportError:
+    from xy_plot_ed import EDXYPlot
+try:
+    from .xy_inputs_ed import NODE_CLASS_MAPPINGS as ED_XY_INPUT_MAPPINGS
+except ImportError:
+    from xy_inputs_ed import NODE_CLASS_MAPPINGS as ED_XY_INPUT_MAPPINGS
 
 sys.path.remove(comfy_dir)
 
@@ -1790,6 +1798,67 @@ def _ed_core_sample(model, seed, steps, cfg, sampler_name, scheduler, positive, 
     return {"result": (model, positive, negative, latent, vae, images), "ui": {}}
 
 
+def _render_ed_xy_grid(images, x_labels, y_labels, grid_spacing=0):
+    """Render one ED XY grid with readable, non-overlapping Y labels."""
+    pil_images = [tensor2pil(image) for image in images]
+    if not pil_images:
+        raise ValueError("ED XY grid has no images")
+    cell_w = max(image.width for image in pil_images)
+    cell_h = max(image.height for image in pil_images)
+    columns = max(1, len(x_labels))
+    rows = max(1, len(y_labels))
+    spacing = max(0, int(grid_spacing or 0))
+    header, label_w = 46, 34
+    grid = Image.new(
+        "RGB",
+        (label_w + columns * cell_w + max(0, columns - 1) * spacing,
+         header + rows * cell_h + max(0, rows - 1) * spacing),
+        "white",
+    )
+    draw = ImageDraw.Draw(grid)
+    font = ImageFont.load_default()
+    for xi, label in enumerate(x_labels):
+        x = label_w + xi * (cell_w + spacing) + 6
+        draw.text((x, 12), str(label), fill="black", font=font)
+    for yi, label in enumerate(y_labels):
+        text = str(label)
+        bbox = font.getbbox(text)
+        text_w = max(1, bbox[2] - bbox[0])
+        text_h = max(1, bbox[3] - bbox[1])
+        label_img = Image.new("RGBA", (text_w + 8, text_h + 8), (255, 255, 255, 0))
+        label_draw = ImageDraw.Draw(label_img)
+        label_draw.text((4 - bbox[0], 4 - bbox[1]), text, fill="black", font=font)
+        # Negative rotation in PIL is clockwise, so the label follows height.
+        label_img = label_img.rotate(-90, expand=True)
+        max_label_h = max(1, cell_h - 12)
+        if label_img.height > max_label_h:
+            scale = max_label_h / label_img.height
+            label_img = label_img.resize((max(1, int(label_img.width * scale)), max_label_h))
+        label_x = max(0, (label_w - label_img.width) // 2)
+        label_y = header + yi * (cell_h + spacing) + max(0, (cell_h - label_img.height) // 2)
+        grid.paste(label_img.convert("RGB"), (label_x, label_y), label_img.getchannel("A"))
+        for xi in range(columns):
+            cell_index = yi * columns + xi
+            cell_x = label_w + xi * (cell_w + spacing)
+            cell_y = header + yi * (cell_h + spacing)
+            grid.paste(pil_images[cell_index].convert("RGB"), (cell_x, cell_y))
+    return grid
+
+
+def _compact_lora_label(label):
+    """Keep only a LoRA basename and its strength in an XY label."""
+    text = str(label)
+    if "=" not in text:
+        return text
+    name, strength = text.rsplit("=", 1)
+    name = name.replace("/", "\\").rsplit("\\", 1)[-1]
+    for extension in (".safetensors", ".ckpt", ".pt"):
+        if name.casefold().endswith(extension):
+            name = name[:-len(extension)]
+            break
+    return f"{name}={strength}"
+
+
 class KSampler_ED():
     SET_SEED_CFG_SAMPLER = {
         "from node to ctx": 1,
@@ -1894,6 +1963,17 @@ class KSampler_ED():
                 set_preview_method(previous_preview_method)
                 context = new_context_ed(context, latent=latent_list, images=output_images)
                 return {"ui": result_ui, "result": (context, output_images, steps)}
+            if x_type != "Nothing" or y_type != "Nothing":
+                output_images, latent_list = self.sample_xy_grid_basic(
+                    context, xy, vae, latent_image, seed, steps, cfg,
+                    sampler_name, scheduler, denoise, properties['tiled_vae'],
+                )
+                result_ui = nodes.PreviewImage().save_images(
+                    output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
+                )["ui"]
+                set_preview_method(previous_preview_method)
+                context = new_context_ed(context, latent=latent_list, images=output_images)
+                return {"ui": result_ui, "result": (context, output_images, steps)}
         
         if do_refine_only:
             latent_list = ED_Util.vae_encode(vae, optional_image, properties['tiled_vae'])
@@ -1939,6 +2019,93 @@ class KSampler_ED():
         context = new_context_ed(context, latent=latent_list or latent_image, images=output_images)
 
         return {"ui": result_ui, "result": (context, output_images, steps)}
+
+    # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
+    @staticmethod
+    def sample_xy_grid_basic(context, xy, vae, latent_image, seed, steps, cfg,
+                             sampler_name, scheduler, denoise, tiled_vae):
+        """Execute common non-model XY axes from one immutable ED context."""
+        x_type, x_values, y_type, y_values = xy[:4]
+        x_values = list(x_values or [""]) if x_type != "Nothing" else [""]
+        y_values = list(y_values or [""]) if y_type != "Nothing" else [""]
+        supported = {"Nothing", "Seeds++ Batch", "Steps", "CFG Scale", "Sampler", "Scheduler", "Denoise"}
+        unsupported = {axis for axis in (x_type, y_type) if axis not in supported}
+        if unsupported:
+            raise ValueError(
+                "ED XY Plot currently supports only seed/steps/CFG/sampler/scheduler/denoise axes; "
+                f"unsupported axis: {', '.join(sorted(unsupported))}"
+            )
+
+        _, model, clip, _, positive, negative, base_latent = context_2_tuple_ed(
+            context, ["model", "clip", "vae", "positive", "negative", "latent"]
+        )
+        if model is None or positive is None or negative is None:
+            raise ValueError("ED XY Plot requires model and conditioning from Efficient Loader ED")
+        samples = base_latent or latent_image
+        if isinstance(samples, dict) and samples.get("samples") is not None:
+            samples = dict(samples)
+            samples["samples"] = samples["samples"][:1]
+
+        def apply_axis(axis_type, value, state):
+            if axis_type == "Seeds++ Batch":
+                state["seed"] = int(seed) + int(value)
+            elif axis_type == "Steps":
+                state["steps"] = max(1, int(value))
+            elif axis_type == "CFG Scale":
+                state["cfg"] = float(value)
+            elif axis_type == "Denoise":
+                state["denoise"] = float(value)
+            elif axis_type == "Scheduler":
+                # XY Plot keeps scheduler values as ``(name, None)`` when
+                # there is no sampler axis.  Use the name, never the tuple's
+                # repr, or ComfyUI will reject the scheduler contract.
+                state["scheduler"] = str(value[0] if isinstance(value, (tuple, list)) else value)
+            elif axis_type == "Sampler":
+                if isinstance(value, (tuple, list)):
+                    state["sampler"] = value[0]
+                    if len(value) > 1 and value[1] is not None:
+                        state["scheduler"] = value[1]
+                else:
+                    state["sampler"] = str(value)
+
+        def label(axis_type, value):
+            if axis_type == "Nothing":
+                return ""
+            if isinstance(value, (tuple, list)):
+                return f"{axis_type}={value[0]}" + (f", {value[1]}" if len(value) > 1 and value[1] else "")
+            return f"{axis_type}={value}"
+
+        print(f"[XY-ED-BASIC] grid x={x_type}:{len(x_values)}, y={y_type}:{len(y_values)}")
+        images, latents = [], []
+        x_labels = [label(x_type, value) for value in x_values]
+        y_labels = [label(y_type, value) for value in y_values]
+        for yi, y_value in enumerate(y_values):
+            for xi, x_value in enumerate(x_values):
+                state = {"seed": int(seed), "steps": int(steps), "cfg": float(cfg),
+                         "sampler": sampler_name, "scheduler": scheduler, "denoise": float(denoise)}
+                apply_axis(x_type, x_value, state)
+                apply_axis(y_type, y_value, state)
+                cell_latent = nodes.KSampler().sample(
+                    model, state["seed"], state["steps"], state["cfg"],
+                    state["sampler"], state["scheduler"], positive, negative,
+                    samples, denoise=state["denoise"],
+                )[0]
+                images.append(ED_Util.vae_decode(vae, cell_latent, tiled_vae))
+                latents.append(cell_latent)
+                print(
+                    f"[XY-ED-BASIC] cell=({yi + 1},{xi + 1}) seed={state['seed']} "
+                    f"steps={state['steps']} cfg={state['cfg']:.6g} "
+                    f"sampler={state['sampler']} scheduler={state['scheduler']} "
+                    f"denoise={state['denoise']:.6g}"
+                )
+        grid = _render_ed_xy_grid(
+            images, x_labels or ["X"], y_labels or ["Y"], xy[4] if len(xy) > 4 else 0
+        )
+        latent_batch = dict(latents[0])
+        latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
+        batch_images = torch.cat(images, dim=0)
+        plot_output = bool(xy[7]) if len(xy) > 7 else True
+        return (pil2tensor(grid) if plot_output else batch_images), latent_batch
 
     # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
     @staticmethod
@@ -2063,22 +2230,14 @@ class KSampler_ED():
                 latents.append(cell_latent)
                 images.append(ED_Util.vae_decode(vae, cell_latent, tiled_vae))
                 print(f"[XY-ED-V2] cell=({yi},{xi}) x={xv} y={yv} stack={stack_fingerprint(final_stack)}")
-        pil = [tensor2pil(image) for image in images]
-        cell_w = max(image.width for image in pil)
-        cell_h = max(image.height for image in pil)
-        header, label_w = 46, 120
-        grid = Image.new("RGB", (label_w + len(x_axes) * cell_w, header + len(y_axes) * cell_h), "white")
-        draw = ImageDraw.Draw(grid)
-        font = ImageFont.load_default()
-        for xi, axis in enumerate(x_axes):
-            draw.text((label_w + xi * cell_w + 6, 12), axis.label if axis else "X", fill="black", font=font)
-        for yi, axis in enumerate(y_axes):
-            draw.text((6, header + yi * cell_h + 8), axis.label if axis else "Y", fill="black", font=font)
-            for xi in range(len(x_axes)):
-                grid.paste(pil[yi * len(x_axes) + xi].convert("RGB"), (label_w + xi * cell_w, header + yi * cell_h))
+        x_labels = [_compact_lora_label(axis.label) if axis else "X" for axis in x_axes]
+        y_labels = [_compact_lora_label(axis.label) if axis else "Y" for axis in y_axes]
+        grid = _render_ed_xy_grid(images, x_labels, y_labels, xy[4] if len(xy) > 4 else 0)
         latent_batch = dict(latents[0])
         latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
-        return pil2tensor(grid), latent_batch
+        batch_images = torch.cat(images, dim=0)
+        plot_output = bool(xy[7]) if len(xy) > 7 else True
+        return (pil2tensor(grid) if plot_output else batch_images), latent_batch
 
     @staticmethod
     def is_positive_changed(positive, positive_opt):
@@ -3128,6 +3287,9 @@ NODE_CLASS_MAPPINGS = {
     "Get Booru Tag 💬ED": GetBooruTag_ED,
     "Simple Text 💬ED": SimpleText_ED,
     "TIPO Script 💬ED": TIPOScript_ED,
+    # ED owns the XY script composer so Anima workflows do not require the
+    # legacy efficiency-nodes plugin just to build the sampler script.
+    "XY Plot": EDXYPlot,
     "XY Input: LoRA Sweep 💬ED": EDLoraSweep,
     
     "FaceDetailer 💬ED": FaceDetailer_ED,
@@ -3141,6 +3303,11 @@ NODE_CLASS_MAPPINGS = {
 
 if PowerLoraLoaderStackED is not None:
     NODE_CLASS_MAPPINGS["Power Lora Loader 💬ED (LORA_STACK)"] = PowerLoraLoaderStackED
+
+# Common XY input nodes are implemented locally so the ED loader/sampler and
+# XY script composer remain usable when the legacy efficiency-nodes plugin is
+# disabled.
+NODE_CLASS_MAPPINGS.update(ED_XY_INPUT_MAPPINGS)
 
 
 
