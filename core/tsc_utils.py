@@ -457,22 +457,56 @@ def clear_cache_by_exception(node_id, vae_dict=None, ckpt_dict=None, lora_dict=N
                     if not tuple_item[-1]:
                         loaded_objects[dict_name].remove(tuple_item)
 
-# Retrieve the cache number from 'node_settings' json file
+# Built-in defaults keep the loader usable when a user removes a generated
+# settings file or an older installation did not ship it.
+_DEFAULT_CACHE_SETTINGS = {
+    "vae": 1,
+    "ckpt": 1,
+    "lora": 1,
+    "refn": 1,
+}
+_CACHE_SETTINGS_WARNING_SHOWN = set()
+
+
 def get_cache_numbers(node_name):
-    # Get the directory path of the current file
-    my_dir = os.path.dirname(os.path.abspath(__file__))
-    # Construct the file path for node_settings.json
-    settings_file = os.path.join(my_dir, 'node_settings.json')
-    # Load the settings from the JSON file
-    with open(settings_file, 'r') as file:
-        node_settings = json.load(file)
-    # Retrieve the cache numbers for the given node
-    model_cache_settings = node_settings.get(node_name, {}).get('model_cache', {})
-    vae_cache = int(model_cache_settings.get('vae', 1))
-    ckpt_cache = int(model_cache_settings.get('ckpt', 1))
-    lora_cache = int(model_cache_settings.get('lora', 1))
-    refn_cache = int(model_cache_settings.get('ckpt', 1))
-    return vae_cache, ckpt_cache, lora_cache, refn_cache,
+    """Return (vae, checkpoint, lora, refiner) cache sizes for *node_name*.
+
+    ``node_settings.json`` is user-editable state, so a missing, invalid, or
+    partially edited file must not prevent ComfyUI from executing a node.
+    Invalid individual values are replaced independently with the defaults.
+    """
+    settings_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "node_settings.json")
+    node_settings = {}
+    fallback_reason = None
+    try:
+        with open(settings_file, "r", encoding="utf-8") as file:
+            loaded = json.load(file)
+        if isinstance(loaded, dict):
+            node_settings = loaded
+        else:
+            fallback_reason = "root is not an object"
+    except FileNotFoundError:
+        fallback_reason = "file is missing"
+    except (OSError, json.JSONDecodeError) as exc:
+        fallback_reason = f"{type(exc).__name__}: {exc}"
+
+    if fallback_reason and node_name not in _CACHE_SETTINGS_WARNING_SHOWN:
+        print(f"[ED-CORE] cache settings fallback for {node_name}: {fallback_reason}; using defaults")
+        _CACHE_SETTINGS_WARNING_SHOWN.add(node_name)
+
+    node_config = node_settings.get(node_name, {})
+    model_cache_settings = node_config.get("model_cache", {}) if isinstance(node_config, dict) else {}
+    if not isinstance(model_cache_settings, dict):
+        model_cache_settings = {}
+
+    values = []
+    for key, default in _DEFAULT_CACHE_SETTINGS.items():
+        try:
+            value = int(model_cache_settings.get(key, default))
+            values.append(max(1, value))
+        except (TypeError, ValueError):
+            values.append(default)
+    return tuple(values)
 
 def print_last_helds(id=None):
     print("\n" + "-" * 40)  # Print an empty line followed by a separator line
