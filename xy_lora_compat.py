@@ -13,6 +13,9 @@ class XYLoraAxisValue(list):
         self.default_model = float(default_model)
         self.default_clip = float(default_clip)
         self.base_stack = [tuple(item) for item in (base_stack or [])]
+        model_label = "*" if model_override is None else f"{float(model_override):.6g}"
+        clip_label = "*" if clip_override is None else f"{float(clip_override):.6g}"
+        self.label = f"{self.target_name}={model_label}/{clip_label}"
 
 
 def normalize_entry(name, model_strength=1.0, clip_strength=1.0):

@@ -34,6 +34,10 @@ try:
 except ImportError:
     from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 try:
+    from .xy_lora_compat import XYLoraAxisValue, merge_partial_stack
+except ImportError:
+    from xy_lora_compat import XYLoraAxisValue, merge_partial_stack
+try:
     from .xy_plot_ed import EDXYPlot
 except ImportError:
     from xy_plot_ed import EDXYPlot
@@ -45,6 +49,14 @@ try:
     from .legacy_compat_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_COMPAT_MAPPINGS
 except ImportError:
     from legacy_compat_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_COMPAT_MAPPINGS
+try:
+    from .legacy_pipeline_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_PIPELINE_MAPPINGS
+except ImportError:
+    from legacy_pipeline_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_PIPELINE_MAPPINGS
+try:
+    from .xy_legacy_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_XY_MAPPINGS
+except ImportError:
+    from xy_legacy_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_XY_MAPPINGS
 
 sys.path.remove(comfy_dir)
 
@@ -2194,8 +2206,9 @@ class KSampler_ED():
     def sample_lora_xy_grid_v2(context, xy, vae, latent_image, seed, steps, cfg,
                                sampler_name, scheduler, denoise, tiled_vae):
         x_type, x_values, y_type, y_values = xy[:4]
-        x_axes = [v for v in (x_values or []) if isinstance(v, EDLoraAxisValue)]
-        y_axes = [v for v in (y_values or []) if isinstance(v, EDLoraAxisValue)]
+        axis_classes = (EDLoraAxisValue, XYLoraAxisValue)
+        x_axes = [v for v in (x_values or []) if isinstance(v, axis_classes)]
+        y_axes = [v for v in (y_values or []) if isinstance(v, axis_classes)]
         if not x_axes:
             x_axes = [None]
         if not y_axes:
@@ -2203,7 +2216,15 @@ class KSampler_ED():
         source = next((v for v in x_axes + y_axes if v is not None), None)
         if source is None:
             raise ValueError("ED LoRA XY Plot 至少需要一个 Sweep 轴")
-        pipe = source.plan.lora_pipe
+        pipe = getattr(source, "plan", None)
+        pipe = getattr(pipe, "lora_pipe", None) if pipe is not None else None
+        if pipe is None:
+            pipe = context_2_tuple_ed(context, ["lora_pipe"])[1]
+        if pipe is None:
+            raise ValueError(
+                "ED LoRA XY Plot 需要连接 Power Lora Loader ED 的 LORA_PIPE；"
+                "旧版 LoRA 轴不能从已应用模型反推出可复用的基础栈。"
+            )
         _, raw_positive, raw_negative, clip_encoder, cnet_stack = context_2_tuple_ed(
             context, ["xy_raw_positive", "xy_raw_negative", "clip_encoder", "cnet_stack"]
         )
@@ -2215,9 +2236,31 @@ class KSampler_ED():
             for xi, x_axis in enumerate(x_axes, 1):
                 xp = x_axis.plan if x_axis else None
                 yp = y_axis.plan if y_axis else None
-                xv = x_axis.value if x_axis else None
-                yv = y_axis.value if y_axis else None
-                final_stack = combine_sweep_stacks(pipe, xp, xv, yp, yv)
+                # ED-native values expose ``.value`` (a normalized override
+                # mapping); legacy compatibility values are themselves the
+                # partial override object and must not be coerced to their
+                # resolved list, otherwise X/Y composition loses the target.
+                xv = x_axis.value if isinstance(x_axis, EDLoraAxisValue) else x_axis
+                yv = y_axis.value if isinstance(y_axis, EDLoraAxisValue) else y_axis
+                if isinstance(x_axis, XYLoraAxisValue) or isinstance(y_axis, XYLoraAxisValue):
+                    # Compatibility values already contain partial stack
+                    # intent. Apply both axes to one immutable Power Loader
+                    # stack, preserving row order and preventing accumulation.
+                    final_stack = list(pipe.stack)
+                    for axis_value in (xv, yv):
+                        if isinstance(axis_value, XYLoraAxisValue):
+                            final_stack = merge_partial_stack(axis_value, final_stack)
+                    # An ED-native axis may share the grid with a legacy axis.
+                    if isinstance(x_axis, EDLoraAxisValue) or isinstance(y_axis, EDLoraAxisValue):
+                        final_stack = combine_sweep_stacks(
+                            EDLoraPipe(pipe.base_model, pipe.base_clip, pipe.applied_model, pipe.applied_clip, final_stack),
+                            xp if isinstance(x_axis, EDLoraAxisValue) else None,
+                            xv if isinstance(x_axis, EDLoraAxisValue) else None,
+                            yp if isinstance(y_axis, EDLoraAxisValue) else None,
+                            yv if isinstance(y_axis, EDLoraAxisValue) else None,
+                        )
+                else:
+                    final_stack = combine_sweep_stacks(pipe, xp, xv, yp, yv)
                 cell_model, cell_clip = ED_Util.apply_load_lora(
                     final_stack, pipe.base_model, pipe.base_clip,
                     f"ED LoRA XY [{yi},{xi}]",
@@ -3313,6 +3356,8 @@ if PowerLoraLoaderStackED is not None:
 # disabled.
 NODE_CLASS_MAPPINGS.update(ED_XY_INPUT_MAPPINGS)
 NODE_CLASS_MAPPINGS.update(ED_LEGACY_COMPAT_MAPPINGS)
+NODE_CLASS_MAPPINGS.update(ED_LEGACY_PIPELINE_MAPPINGS)
+NODE_CLASS_MAPPINGS.update(ED_LEGACY_XY_MAPPINGS)
 
 
 

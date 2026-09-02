@@ -14,6 +14,15 @@ ED 的核心 Loader、LoRA Stack、XY Sweep 和缓存工具必须能够在没有
   `Control Net Stacker`、`Apply ControlNet Stack`、`Image Overlay`。
 - 旧版 `LoRA Stacker`：已按原 50 行字段协议在 `legacy_compat_ed.py` 实现；
   `js/ed_legacy_compat_widgets.js` 负责根据 `lora_count` 隐藏未使用行。
+- 旧版基础三节点的显式适配器已加入：`Efficient Loader 💬ED (Legacy Compat)`、
+  `KSampler (Efficient) 💬ED (Legacy Compat)`、`XY Plot 💬ED (Legacy Compat)`。
+  适配器只使用 ComfyUI 核心，并拒绝尚未迁移的脚本键或 LoRA/Checkpoint 等轴。
+- 旧版 `XY Input: LoRA`、`XY Input: LoRA Plot`、`XY Input: Aesthetic Score` 已在
+  `xy_legacy_ed.py` 注册 ED 自有实现。LoRA 轴值携带不可变栈覆盖并由 ED sampler
+  统一应用；仍需在代表性旧工作流上验证 `ED_LORA_PIPE` 连接后，才能解除旧插件门槛。
+- `tools/migrate_legacy_efficiency_workflow.py` 提供非破坏迁移：默认 dry-run，只有所有节点
+  均在已验证映射中时才允许 `--write` 生成新 JSON。示例产物为
+  `user\\default\\workflows\\ImagesGrid\\efficiency_ED_migrated.json`。
 
 ## 当前迁移门槛
 
@@ -24,9 +33,9 @@ socket/context 契约尚未全部兼容：
 | --- | --- | --- |
 | `Efficient Loader` | 旧版返回 `MODEL, CONDITIONING+, CONDITIONING-, LATENT, VAE, CLIP, DEPENDENCIES`；ED 使用 `RGTHREE_CONTEXT` 与 ED 管线 | 待独立适配器/工作流迁移 |
 | `KSampler (Efficient)` | 旧版直接接 `MODEL` 和 `SCRIPT`；ED 采样器以 `RGTHREE_CONTEXT` 为入口 | 待迁移 |
-| `XY Input: LoRA` | 旧版 50 行 LoRA/批处理协议；ED 使用 ED XY 计划 | 待迁移 |
-| `XY Input: LoRA Plot` | 旧版依赖旧 XY 执行器；ED Sweep V2 使用不可变 Power Loader pipe | 待迁移 |
-| `XY Input: Aesthetic Score` | 旧版编码到旧 sampler script | 待迁移 |
+| `XY Input: LoRA` | 50 行协议已由 `xy_legacy_ed.py` 复刻；需 ED 管线实跑 | 适配器已注册，执行验证待完成 |
+| `XY Input: LoRA Plot` | 双轴/Connected Stack 已转为 ED 轴值；需 ED 管线实跑 | 适配器已注册，执行验证待完成 |
+| `XY Input: Aesthetic Score` | 输入协议已复刻；AScore 采样语义仍待迁移 | 仅接口兼容 |
 | `Evaluate *` / stack helpers | 输入输出契约明确，无第三方运行时依赖 | 已迁移 |
 
 只有当代表工作流在 `--disable-all-custom-nodes --whitelist-custom-nodes efficiency-nodes-ED`
