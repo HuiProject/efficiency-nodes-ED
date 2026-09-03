@@ -505,11 +505,30 @@ function applyWidgetLogic_Init(node) {
     }
 }
 
+function migrateEfficientLoaderSteps(graphData) {
+    const graphNodes = graphData?.nodes;
+    if (!Array.isArray(graphNodes)) return;
+
+    for (const serializedNode of graphNodes) {
+        if (serializedNode.type !== "Efficient Loader 💬ED") continue;
+        const values = serializedNode.widgets_values;
+
+        // Older saves place sampler_name at index 8. The new steps widget is
+        // inserted directly after cfg, so add a conservative default only
+        // when that old sampler string is still present at the slot.
+        if (Array.isArray(values) && typeof values[8] === "string") {
+            values.splice(8, 0, 20);
+            console.info(`[ED-UI] migrated Efficient Loader steps node=${serializedNode.id}`);
+        }
+    }
+}
+
 app.registerExtension({
     name: "ED.DynamicWidgets",
 
-    async beforeConfigureGraph() {
+    async beforeConfigureGraph(graphData) {
         dynamicWidgets_initialized = false;
+        migrateEfficientLoaderSteps(graphData);
     },
 
     nodeCreated(node) {

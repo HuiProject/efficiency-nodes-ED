@@ -57,6 +57,10 @@ try:
     from .xy_legacy_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_XY_MAPPINGS
 except ImportError:
     from xy_legacy_ed import NODE_CLASS_MAPPINGS as ED_LEGACY_XY_MAPPINGS
+try:
+    from .ed_context_contract import build_context_io, context_to_tuple, new_context
+except ImportError:
+    from ed_context_contract import build_context_io, context_to_tuple, new_context
 
 sys.path.remove(comfy_dir)
 
@@ -70,7 +74,29 @@ except ImportError:
 sys.path.append(custom_nodes_dir)
 
 NODES = nodes.NODE_CLASS_MAPPINGS
-SCHEDULERS = comfy.samplers.KSampler.SCHEDULERS + ["AYS SD1", "AYS SDXL", "AYS SVD", "GITS"]
+# ComfyUI validates combo connection types by their full value list. Keeping
+# this identical to core lets Scheduler Selector and Context Big connect to ED.
+SCHEDULERS = list(comfy.samplers.KSampler.SCHEDULERS)
+_LEGACY_SCHEDULER_ALIASES = {
+    "AYS SD1": "ays",
+    "AYS SDXL": "ays",
+    "AYS SVD": "ays_30",
+    "GITS": "gits",
+    "GITS[coeff=1.2]": "gits",
+}
+
+
+def normalize_scheduler(scheduler):
+    """Normalize saved legacy labels and reject values absent from core."""
+    value = scheduler[0] if isinstance(scheduler, (tuple, list)) else scheduler
+    value = str(value)
+    resolved = _LEGACY_SCHEDULER_ALIASES.get(value, value)
+    if resolved not in SCHEDULERS:
+        raise ValueError(
+            f"ED scheduler '{value}' is unavailable in this ComfyUI build. "
+            f"Choose one of: {', '.join(SCHEDULERS)}"
+        )
+    return resolved
 
 ##############################################################################################################
 ##############################################################################################################
@@ -113,27 +139,43 @@ _all_ed_context_input_output_data = {
   "cnet_stack": ("cnet_stack", "CONTROL_NET_STACK", "CNET_STACK"),
 }
 
+_ED_CONTEXT_OPTIONAL_INPUTS, _ED_CONTEXT_RETURN_TYPES, _ED_CONTEXT_RETURN_NAMES = build_context_io(
+    _all_ed_context_input_output_data,
+    force_input_types=("INT", "STRING", "FLOAT"),
+    force_input_names=("sampler", "scheduler", "ckpt_name"),
+)
+
+
 def new_context_ed(base_ctx, **kwargs):
-    """Creates a new context from the provided data, with an optional base ctx to start."""
-    context = base_ctx if base_ctx is not None else None
-    new_ctx = {}
-    for key in _all_ed_context_input_output_data:
-        if key == "base_ctx":
-            continue
-        v = kwargs[key] if key in kwargs else None
-        new_ctx[key] = v if v is not None else context[key] if context is not None and key in context else None
-    return new_ctx
+    return new_context(_all_ed_context_input_output_data, base_ctx, **kwargs)
+
 
 def context_2_tuple_ed(ctx, inputs_list=None):
-    """Returns a tuple for returning in the order of the inputs list."""
-    if inputs_list is None:
-        inputs_list = _all_ed_context_input_output_data.keys()
-    tup_list = [ctx,]
-    for key in inputs_list:
-        if key == "base_ctx":
-            continue
-        tup_list.append(ctx[key] if ctx is not None and key in ctx else None)
-    return tuple(tup_list)
+    return context_to_tuple(_all_ed_context_input_output_data, ctx, inputs_list)
+
+
+class ContextBig_ED:
+    """ED-owned Context Big that preserves every ED pipeline field."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}, "optional": dict(_ED_CONTEXT_OPTIONAL_INPUTS), "hidden": {}}
+
+    RETURN_TYPES = _ED_CONTEXT_RETURN_TYPES
+    RETURN_NAMES = _ED_CONTEXT_RETURN_NAMES
+    FUNCTION = "convert"
+    CATEGORY = "Efficiency Nodes/Context"
+
+    def convert(self, base_ctx=None, **kwargs):
+        context = new_context_ed(base_ctx, **kwargs)
+        overrides = [key for key, value in kwargs.items() if value is not None]
+        print(
+            "[ED-CORE] Context Big "
+            f"overrides={overrides or ['base only']} "
+            f"raw_prompts={context.get('xy_raw_positive') is not None and context.get('xy_raw_negative') is not None} "
+            f"lora_pipe={context.get('lora_pipe') is not None}"
+        )
+        return context_2_tuple_ed(context)
 
 ##############################################################################################################
 # CASHE
@@ -756,6 +798,7 @@ class EfficientLoader_ED():
                               "batch_size": ("INT", {"default": 1, "min": 1, "max": 262144}),
                               "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff}),
                               "cfg": ("FLOAT", {"default": 7.0, "min": 0.0, "max": 100.0}),
+                              "steps": ("INT", {"default": 20, "min": 1, "max": 10000, "step": 1}),
                               "sampler_name": (comfy.samplers.KSampler.SAMPLERS,),
                               "scheduler": (SCHEDULERS,),
                               #"positive": ("STRING", {"default": "","multiline": True, "dynamicPrompts": True}),
@@ -784,7 +827,7 @@ class EfficientLoader_ED():
     CATEGORY = "Efficiency Nodes/Loaders"
         
     def efficientloader_ed(self, ckpt_name, vae_name, clip_skip, paint_mode, batch_size, 
-                        seed, cfg, sampler_name, scheduler, image_width, image_height,
+                        seed, cfg, steps, sampler_name, scheduler, image_width, image_height,
                         context_opt=None, lora_stack=None, cnet_stack=None, pixels=None, mask=None, positive="", negative="",
                         refiner_name="None", positive_refiner=None, negative_refiner=None, ascore=None, prompt=None,
                         my_unique_id=None, extra_pnginfo=None, loader_type="regular"):
@@ -910,7 +953,7 @@ class EfficientLoader_ED():
                         image_width, image_height, lora_params, cnet_stack)
                 
         context = new_context_ed(None, model=model, clip=clip, vae=vae, positive=positive_encoded, negative=negative_encoded, 
-                latent=samples_latent, images=pixels, seed=seed, step_refiner=batch_size, cfg=cfg, ckpt_name=ckpt_name, sampler=sampler_name, scheduler=scheduler, clip_width=image_width, clip_height=image_height, text_pos_g=positive_prompt, text_neg_g=negative_prompt, mask=mask, lora_stack=lora_stack, clip_encoder=clip_encoder,
+                latent=samples_latent, images=pixels, seed=seed, steps=steps, step_refiner=batch_size, cfg=cfg, ckpt_name=ckpt_name, sampler=sampler_name, scheduler=scheduler, clip_width=image_width, clip_height=image_height, text_pos_g=positive_prompt, text_neg_g=negative_prompt, mask=mask, lora_stack=lora_stack, clip_encoder=clip_encoder,
                 lora_pipe=lora_pipe, xy_raw_positive=xy_raw_positive, xy_raw_negative=xy_raw_negative,
                 cnet_stack=cnet_stack)
 
@@ -2335,13 +2378,17 @@ class KSampler_ED():
             if c_seed is None:
                 raise Exception("KSampler (Efficient) ED: no seed, cfg, sampler, scheduler in the context.")
 
-            seed, cfg, sampler_name, scheduler = c_seed, c_cfg, c_sampler, c_scheduler
+            seed, cfg, sampler_name, scheduler = c_seed, c_cfg, c_sampler, normalize_scheduler(c_scheduler)
 
             for key, value in zip(["seed", "cfg", "sampler_name", "scheduler"], [seed, cfg, sampler_name, scheduler]):
                 PromptServer.instance.send_sync("ed-node-feedback", {"node_id": my_unique_id, "widget_name": key, "type": "text", "data": value})
 
         elif mode == "from node to ctx":
+            scheduler = normalize_scheduler(scheduler)
             context = new_context_ed(context, seed=seed, cfg=cfg, sampler=sampler_name, scheduler=scheduler)
+
+        else:
+            scheduler = normalize_scheduler(scheduler)
 
         return context, seed, cfg, sampler_name, scheduler
 
@@ -3315,6 +3362,9 @@ class EDLoraSweep:
 
 NODE_CLASS_MAPPINGS = {
     #ED
+    "Context Big 💬ED": ContextBig_ED,
+    # Compatibility alias lets saved workflows load after rgthree is disabled.
+    "Context Big (rgthree)": ContextBig_ED,
     "Efficient Loader 💬ED": EfficientLoader_ED,
     "KSampler (Efficient) 💬ED": KSampler_ED,
     "KSampler Text 💬ED": KSamplerTEXT_ED,    
