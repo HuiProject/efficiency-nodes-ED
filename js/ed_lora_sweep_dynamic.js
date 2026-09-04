@@ -47,14 +47,19 @@ function connectedStackNames(node) {
 }
 
 function hideWidget(item) {
-    if (!item || item.__edSweepHidden) return;
+    if (!item) return;
+    if (!item.__edSweepHidden) {
+        item.__edSweepOriginalType = item.type;
+        item.__edSweepOriginalComputeSize = item.computeSize;
+    }
     item.__edSweepHidden = true;
-    item.__edSweepOriginalType = item.type;
-    item.__edSweepOriginalComputeSize = item.computeSize;
     // Match ComfyUI/ED's hidden-widget convention.  The frontend renders a
     // plain `hidden` type, leaving stale fields visible after node movement.
     item.type = "tschide";
     item.computeSize = () => [0, -4];
+    item.hidden = true;
+    item.options = item.options || {};
+    item.options.hidden = true;
 }
 
 // Vanilla LiteGraph in ComfyUI 0.30.2 has no stable removeWidget method on
@@ -87,6 +92,8 @@ function showWidget(item) {
     if (!item?.__edSweepHidden) return;
     item.type = item.__edSweepOriginalType;
     item.computeSize = item.__edSweepOriginalComputeSize;
+    item.hidden = false;
+    if (item.options) item.options.hidden = false;
     item.__edSweepHidden = false;
 }
 
@@ -260,6 +267,9 @@ function initialize(node) {
     const originalDrawForeground = node.onDrawForeground;
     node.onDrawForeground = function (ctx) {
         if (!this.__edSweepSyncing) {
+            hideWidget(widget(this, "target_lora"));
+            hideWidget(widget(this, "first_strength"));
+            hideWidget(widget(this, "last_strength"));
             const count = Number(widget(this, "lora_count")?.value ?? 0);
             const indexes = (this.widgets || []).map(item => {
                 const match = ROW_RE.exec(item.name || "");

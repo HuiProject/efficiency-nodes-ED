@@ -46,15 +46,20 @@ function connectedStackNames(node) {
 }
 
 function hideWidget(item) {
-    if (!item || item.__edPlotHidden) return;
+    if (!item) return;
+    if (!item.__edPlotHidden) {
+        item.__edPlotOriginalType = item.type;
+        item.__edPlotOriginalComputeSize = item.computeSize;
+    }
     item.__edPlotHidden = true;
-    item.__edPlotOriginalType = item.type;
-    item.__edPlotOriginalComputeSize = item.computeSize;
     // `tschide` is ComfyUI's supported hidden-widget type (the ED utility
     // uses the same prefix).  A plain `hidden` type is still drawn by the
     // 1.47 frontend, which is why old fields reappeared outside the node.
     item.type = "tschide";
     item.computeSize = () => [0, -4];
+    item.hidden = true;
+    item.options = item.options || {};
+    item.options.hidden = true;
 }
 
 // ComfyUI 0.30.2 uses the vanilla LiteGraph node for ED nodes; unlike
@@ -418,6 +423,9 @@ function initialize(node) {
     const previousDraw = node.onDrawForeground;
     node.onDrawForeground = function(ctx) {
         if (!this.__edPlotSyncing) {
+            // ComfyUI may rebuild widget options during a drag/configure
+            // cycle. Re-apply the hidden flags before measuring the node.
+            hideGlobalRanges(this);
             const desired = Math.max(0, Math.min(MAX_ROWS, Number(widget(this, "lora_count")?.value ?? 0)));
             const actual = (this.widgets || []).map(item => {
                 const match = ROW_RE.exec(item.name || "");
