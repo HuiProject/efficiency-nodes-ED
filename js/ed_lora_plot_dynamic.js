@@ -216,6 +216,45 @@ function addNumber(node, name, label, value) {
     return item;
 }
 
+function setRangeLabels(node, index) {
+    const labels = {
+        [`scan_lora_x_first_strength_${index}`]: `L${index} X MStr 起`,
+        [`scan_lora_x_last_strength_${index}`]: `L${index} X MStr 止`,
+        [`scan_lora_y_first_strength_${index}`]: `L${index} Y CStr 起`,
+        [`scan_lora_y_last_strength_${index}`]: `L${index} Y CStr 止`,
+    };
+    for (const [name, label] of Object.entries(labels)) {
+        const item = widget(node, name);
+        if (item) item.label = label;
+    }
+}
+
+// Rows already present in a saved workflow are restored by ComfyUI as normal
+// combo/toggle widgets. New rows use PlotLoraRowWidget, so without this
+// conversion row 1 keeps the raw `scan_lora_name_1` label while row 2 does
+// not. Upgrade in place and preserve the serialized value/options.
+function upgradeExistingRow(node, index) {
+    const selector = widget(node, `scan_lora_name_${index}`);
+    const toggle = widget(node, `scan_lora_${index}_toggle`);
+    if (selector && selector.type !== "ed_plot_lora_row") {
+        const row = new PlotLoraRowWidget(selector, toggle, node, index);
+        row.value = selector.value ?? "None";
+        row.options = selector.options || { values: ["None"] };
+        row.label = `LoRA ${index}`;
+        selector.label = "";
+        const at = node.widgets.indexOf(selector);
+        if (at >= 0) node.widgets[at] = row;
+        console.debug("[ED-UI] upgraded restored LoRA Plot row", {
+            node: node.id, index, lora: row.value,
+        });
+    } else if (selector) {
+        selector.label = "";
+        selector.labelText = `LoRA ${index}`;
+    }
+    hideWidget(toggle);
+    setRangeLabels(node, index);
+}
+
 function addRow(node, index, saved = {}) {
     const base = { ...defaults(node), ...saved };
     const combo = node.addWidget("combo", `scan_lora_name_${index}`, base.name ?? "None",
@@ -253,6 +292,7 @@ function ensureRows(node, requested) {
     const current = indexes.length ? Math.max(...indexes) : 0;
     for (let index = current + 1; index <= count; index += 1) addRow(node, index);
     for (let index = current; index > count; index -= 1) removeRow(node, index);
+    for (let index = 1; index <= count; index += 1) upgradeExistingRow(node, index);
     const width = node.size?.[0] || 220;
     const computed = typeof node.computeSize === "function" ? node.computeSize() : [width, 140];
     node.setSize?.([width, Math.max(140, computed[1] || 0)]);
