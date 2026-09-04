@@ -14,6 +14,23 @@ The selector can include disabled Power Loader rows: they are not part of the
 first stack application, but are valid second-layer overlay targets. It cannot
 select a LoRA absent from the connected Power Loader's rows.
 
+## Target state in Power Loader
+
+Choose the state according to the comparison you need:
+
+- **Disabled (the supplied workflow default):** the target is loaded only by
+  Plot's second layer. Labels such as `MStr=0.5` mean the target's actual
+  loaded strength is 0.5, after the other active Power Loader rows.
+- **Enabled:** Power Loader applies its normal target strength first, then
+  Plot applies the displayed value again. This is the strict historical
+  duplicate-load / "wrong overlay" behaviour. A Power Loader strength of 0.6
+  plus a displayed Plot value of 0.5 is two applications, not a total
+  strength of 0.5.
+
+The two states intentionally produce different images. The legacy overlay
+sampler logs the target state through the Power Loader stack count and always
+prints `mode=legacy-overlay` per generated cell.
+
 Connect the node's `X` and `Y` outputs to the matching `XY Plot` inputs.
 Connect `XY Plot.dependencies` to `Efficient Loader 💬ED.DEPENDENCIES` when
 using encoded legacy axes or when retaining the loader metadata in saved

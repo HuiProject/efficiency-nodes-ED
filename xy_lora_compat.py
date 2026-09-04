@@ -38,6 +38,17 @@ class LegacyOverlayAxisValue:
         self.label = label or ", ".join(str(name) for name in self.target_names)
 
 
+def get_axis_plan(axis_value):
+    """Return an ED sweep plan when an axis carries one.
+
+    ``LegacyOverlayAxisValue`` deliberately contains only the second-load
+    instructions and has no ``plan`` attribute.  Keeping this lookup in the
+    compatibility boundary prevents the sampler from treating legacy Plot
+    axes as immutable Sweep axes.
+    """
+    return getattr(axis_value, "plan", None)
+
+
 def normalize_entry(name, model_strength=1.0, clip_strength=1.0):
     if not name or name == "None":
         return None

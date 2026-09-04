@@ -34,9 +34,9 @@ try:
 except ImportError:
     from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 try:
-    from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, merge_partial_stack
+    from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, get_axis_plan, merge_partial_stack
 except ImportError:
-    from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, merge_partial_stack
+    from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, get_axis_plan, merge_partial_stack
 try:
     from .xy_plot_ed import EDXYPlot
 except ImportError:
@@ -2289,8 +2289,11 @@ class KSampler_ED():
         images, latents = [], []
         for yi, y_axis in enumerate(y_axes, 1):
             for xi, x_axis in enumerate(x_axes, 1):
-                xp = x_axis.plan if x_axis else None
-                yp = y_axis.plan if y_axis else None
+                # Overlay axes intentionally have no immutable Sweep plan.
+                # Use a compatibility lookup so legacy post-stack loading
+                # reaches its branch instead of failing before composition.
+                xp = get_axis_plan(x_axis)
+                yp = get_axis_plan(y_axis)
                 # ED-native values expose ``.value`` (a normalized override
                 # mapping); legacy compatibility values are themselves the
                 # partial override object and must not be coerced to their

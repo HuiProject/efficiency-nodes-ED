@@ -2,7 +2,7 @@ import unittest
 
 from xy_legacy_ed import LegacyXYLoraPlotED
 from xy_lora_ed import EDLoraPipe
-from xy_lora_compat import LegacyOverlayAxisValue
+from xy_lora_compat import LegacyOverlayAxisValue, get_axis_plan
 from xy_plot_ed import compose_xyplot_script
 
 
@@ -78,6 +78,13 @@ class TestEDLoraPlot(unittest.TestCase):
                          ("Anima\\overlay-only.safetensors", 0.5, None))
         self.assertEqual(y_axis[1][0].overrides["anima\\overlay-only.safetensors"],
                          ("Anima\\overlay-only.safetensors", None, 1.0))
+
+    def test_legacy_overlay_axis_has_no_sweep_plan(self):
+        """The sampler must not require .plan before the overlay branch."""
+        overlay = LegacyOverlayAxisValue([
+            ("Anima\\overlay-only.safetensors", 0.5, None),
+        ])
+        self.assertIsNone(get_axis_plan(overlay))
 
     def test_target_must_be_in_connected_stack(self):
         with self.assertRaises(ValueError):
