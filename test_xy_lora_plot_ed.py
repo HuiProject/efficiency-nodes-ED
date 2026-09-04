@@ -1,7 +1,8 @@
 import unittest
 
 from xy_legacy_ed import LegacyXYLoraPlotED
-from xy_lora_ed import EDLoraPipe, EDLoraAxisValue, combine_sweep_stacks
+from xy_lora_ed import EDLoraPipe
+from xy_lora_compat import LegacyOverlayAxisValue
 from xy_plot_ed import compose_xyplot_script
 
 
@@ -11,7 +12,10 @@ class TestEDLoraPlot(unittest.TestCase):
             ("Anima\\first.safetensors", 0.6, 0.7),
             ("Anima\\second.safetensors", 0.2, 0.3),
         ]
-        self.pipe = EDLoraPipe(object(), object(), object(), object(), self.stack)
+        self.pipe = EDLoraPipe(
+            object(), object(), object(), object(), self.stack,
+            available_loras=[item[0] for item in self.stack] + ["Anima\\overlay-only.safetensors"],
+        )
 
     def test_compact_contract_drops_legacy_path_and_strength_widgets(self):
         names = set(LegacyXYLoraPlotED.INPUT_TYPES()["required"])
@@ -24,7 +28,7 @@ class TestEDLoraPlot(unittest.TestCase):
             {"X_first_value", "X_last_value", "Y_first_value", "Y_last_value"},
         )
 
-    def test_two_selected_loras_build_model_and_clip_axes(self):
+    def test_two_selected_loras_build_second_layer_model_and_clip_axes(self):
         x_axis, y_axis = LegacyXYLoraPlotED().xy_value(
             lora_count=2,
             X_batch_count=2, X_first_value=0.1, X_last_value=0.9,
@@ -33,17 +37,15 @@ class TestEDLoraPlot(unittest.TestCase):
             scan_lora_name_1=self.stack[0][0], scan_lora_1_toggle=True,
             scan_lora_name_2=self.stack[1][0], scan_lora_2_toggle=True,
         )
-        self.assertEqual(x_axis[0], "ED_LORA_SWEEP_X")
-        self.assertEqual(y_axis[0], "ED_LORA_SWEEP_Y")
-        self.assertTrue(all(isinstance(value, EDLoraAxisValue) for value in x_axis[1]))
-        self.assertEqual(x_axis[1][0].plan.axis_mode, "model")
-        self.assertEqual(y_axis[1][0].plan.axis_mode, "clip")
-        self.assertEqual(x_axis[1][0].value, {
-            "anima\\first.safetensors": 0.1,
-            "anima\\second.safetensors": 0.1,
-        })
+        self.assertEqual(x_axis[0], "LoRA MStr")
+        self.assertEqual(y_axis[0], "LoRA CStr")
+        self.assertTrue(all(isinstance(value, LegacyOverlayAxisValue) for value in x_axis[1]))
+        self.assertEqual(x_axis[1][0].overrides["anima\\first.safetensors"],
+                         ("Anima\\first.safetensors", 0.1, None))
+        self.assertEqual(y_axis[1][-1].overrides["anima\\second.safetensors"],
+                         ("Anima\\second.safetensors", None, 0.8))
 
-    def test_model_and_clip_axes_combine_on_same_target(self):
+    def test_model_and_clip_axes_are_retagged_for_legacy_overlay_sampler(self):
         x_axis, y_axis = LegacyXYLoraPlotED().xy_value(
             lora_count=1,
             X_batch_count=1, X_first_value=0.4, X_last_value=0.4,
@@ -58,11 +60,24 @@ class TestEDLoraPlot(unittest.TestCase):
         self.assertEqual(script["xyplot"][0:4], (
             "ED_LORA_SWEEP_X", x_axis[1], "ED_LORA_SWEEP_Y", y_axis[1]
         ))
-        combined = combine_sweep_stacks(
-            self.pipe, x_axis[1][0].plan, x_axis[1][0].value,
-            y_axis[1][0].plan, y_axis[1][0].value,
+        self.assertEqual(x_axis[1][0].overrides["anima\\first.safetensors"],
+                         ("Anima\\first.safetensors", 0.4, None))
+        self.assertEqual(y_axis[1][0].overrides["anima\\first.safetensors"],
+                         ("Anima\\first.safetensors", None, 0.7))
+
+    def test_disabled_power_loader_row_can_be_selected_as_overlay(self):
+        x_axis, y_axis = LegacyXYLoraPlotED().xy_value(
+            lora_count=1,
+            X_batch_count=2, X_first_value=0.5, X_last_value=1.0,
+            Y_batch_count=1, Y_first_value=1.0, Y_last_value=1.0,
+            lora_pipe=self.pipe,
+            scan_lora_name_1="Anima\\overlay-only.safetensors",
+            scan_lora_1_toggle=True,
         )
-        self.assertEqual(combined[0], ("Anima\\first.safetensors", 0.4, 0.7))
+        self.assertEqual(x_axis[1][0].overrides["anima\\overlay-only.safetensors"],
+                         ("Anima\\overlay-only.safetensors", 0.5, None))
+        self.assertEqual(y_axis[1][0].overrides["anima\\overlay-only.safetensors"],
+                         ("Anima\\overlay-only.safetensors", None, 1.0))
 
     def test_target_must_be_in_connected_stack(self):
         with self.assertRaises(ValueError):

@@ -15,11 +15,11 @@ import folder_paths
 
 try:
     from .xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
-    from .xy_lora_compat import XYLoraAxisValue, make_axis_value, make_stack_sweep
+    from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
     from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, normalize_plot_rows
 except ImportError:  # pragma: no cover - direct development import
     from xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
-    from xy_lora_compat import XYLoraAxisValue, make_axis_value, make_stack_sweep
+    from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
     from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, normalize_plot_rows
 
 
@@ -77,6 +77,29 @@ def _validate_stack_targets(names, base_stack):
             + ", ".join(map(str, missing))
         )
     return None
+
+
+def _validate_plot_targets(names, base_stack, lora_pipe=None):
+    """Validate the Plot's second-layer candidates without changing Sweep.
+
+    An overlay target may be present as a disabled row in Power Loader: it is
+    intentionally absent from the applied stack but remains selectable through
+    ``available_loras``.  A plain LORA_STACK has no row metadata, so it stays
+    restricted to the supplied stack.
+    """
+    if lora_pipe is not None and getattr(lora_pipe, "available_loras", None):
+        available = {
+            str(name).replace("/", "\\").casefold()
+            for name in lora_pipe.available_loras
+        }
+        missing = [name for name in names if str(name).replace("/", "\\").casefold() not in available]
+        if missing:
+            return (
+                "LoRA Plot selection is not a row in the connected Power Loader: "
+                + ", ".join(map(str, missing))
+            )
+        return None
+    return _validate_stack_targets(names, base_stack)
 
 
 class LegacyXYLoraED:
@@ -221,31 +244,44 @@ class LegacyXYLoraPlotED:
         _, names = normalize_plot_rows(lora_count, kwargs, self.MAX_SCAN_LORAS)
         if not names:
             raise ValueError("ED LoRA Plot 至少需要一个已启用的 LoRA 行")
-        error = _validate_stack_targets(names, base_stack)
+        error = _validate_plot_targets(names, base_stack, lora_pipe)
         if error:
             raise ValueError(error)
 
-        # A plan needs the immutable base pipe.  When only the legacy
-        # LORA_STACK socket is connected, create a metadata-only pipe; the
-        # sampler will prefer the real pipe carried by Efficient Loader's
-        # context at execution time.
-        pipe = lora_pipe or EDLoraPipe(None, None, None, None, base_stack)
-        x_specs = [(name, float(X_first_value), float(X_last_value)) for name in names]
-        y_specs = [(name, float(Y_first_value), float(Y_last_value)) for name in names]
-        x_plan = EDLoraSweepPlan(
-            pipe, names, generate_sweep_values(X_batch_count, 0.0, 1.0),
-            target_specs=x_specs, axis_mode="model",
-        )
-        y_plan = EDLoraSweepPlan(
-            pipe, names, generate_sweep_values(Y_batch_count, 0.0, 1.0),
-            target_specs=y_specs, axis_mode="clip",
-        )
-        x_axis = ("ED_LORA_SWEEP_X", x_plan.axis_values())
-        y_axis = ("ED_LORA_SWEEP_Y", y_plan.axis_values())
+        # Deliberately preserve the pre-Sweep behavior: each cell starts with
+        # the model/clip already produced by Power Loader and applies the
+        # selected LoRAs a second time.  X changes model strength only and Y
+        # changes clip strength only; the sampler combines both markers.
+        x_values = generate_sweep_values(X_batch_count, X_first_value, X_last_value)
+        y_values = generate_sweep_values(Y_batch_count, Y_first_value, Y_last_value)
+        defaults = {
+            str(name).replace("/", "\\").casefold(): (float(model), float(clip))
+            for name, model, clip in base_stack
+        }
+
+        def overlay_values(value, field):
+            entries = []
+            for name in names:
+                model, clip = defaults.get(
+                    str(name).replace("/", "\\").casefold(), (1.0, 1.0)
+                )
+                if field == "model":
+                    model = float(value)
+                else:
+                    clip = float(value)
+                entries.append((name, model if field == "model" else None,
+                                clip if field == "clip" else None))
+            suffix = "MStr" if field == "model" else "CStr"
+            return LegacyOverlayAxisValue(entries, ", ".join(
+                f"{name} {suffix}={float(value):.6g}" for name in names
+            ))
+
+        x_axis = ("LoRA MStr", [overlay_values(value, "model") for value in x_values])
+        y_axis = ("LoRA CStr", [overlay_values(value, "clip") for value in y_values])
         print(
             f"[ED-XY-PLOT] stack count={len(base_stack)} "
-            f"targets={names} X values={[v.label for v in x_plan.axis_values()]} "
-            f"Y values={[v.label for v in y_plan.axis_values()]}"
+            f"targets={names} mode=legacy-overlay "
+            f"X values={[v.label for v in x_axis[1]]} Y values={[v.label for v in y_axis[1]]}"
         )
         return (x_axis, y_axis)
 
@@ -292,7 +328,7 @@ class LegacyXYLoraPlotED:
         _, names = normalize_plot_rows(lora_count, kwargs, cls.MAX_SCAN_LORAS)
         if not names:
             return "ED LoRA Plot requires at least one enabled LoRA row"
-        return _validate_stack_targets(names, base_stack) or True
+        return _validate_plot_targets(names, base_stack, lora_pipe) or True
 
 
 class LegacyXYAestheticScoreED:

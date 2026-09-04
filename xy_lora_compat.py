@@ -18,6 +18,26 @@ class XYLoraAxisValue(list):
         self.label = f"{self.target_name}={model_label}/{clip_label}"
 
 
+class LegacyOverlayAxisValue:
+    """Explicit pre-Sweep LoRA Plot value.
+
+    Unlike :class:`XYLoraAxisValue`, this object does not describe a replacement
+    of the immutable Power Loader stack.  It carries only the selected LoRAs
+    and the fields changed by one axis; the sampler applies those entries once
+    more to the already-applied ``context.model/clip``.  Keeping this marker
+    separate prevents the normal ED Sweep path from accidentally inheriting
+    the legacy duplicate-load behavior.
+    """
+
+    def __init__(self, overrides, label=None):
+        self.overrides = {
+            str(name).replace("/", "\\").casefold(): (name, model, clip)
+            for name, model, clip in overrides
+        }
+        self.target_names = [item[0] for item in self.overrides.values()]
+        self.label = label or ", ".join(str(name) for name in self.target_names)
+
+
 def normalize_entry(name, model_strength=1.0, clip_strength=1.0):
     if not name or name == "None":
         return None

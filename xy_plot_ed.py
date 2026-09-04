@@ -7,9 +7,9 @@ sampler. It does not import or proxy the legacy efficiency-nodes plugin.
 from __future__ import annotations
 
 try:
-    from .xy_lora_compat import XYLoraAxisValue
+    from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue
 except ImportError:  # pragma: no cover - direct development import
-    from xy_lora_compat import XYLoraAxisValue
+    from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue
 
 ED_LORA_TYPES = {"ED_LORA_SWEEP_X", "ED_LORA_SWEEP_Y"}
 LEGACY_LORA_TYPES = {"LoRA", "LoRA Stacks", "LoRA Batch", "LoRA Wt", "LoRA MStr", "LoRA CStr"}
@@ -50,9 +50,13 @@ def compose_xyplot_script(grid_spacing, xy_flip, y_label_orientation,
     # ED's compatibility LoRA inputs return real axis objects rather than
     # plain lists.  Re-tag those axes so the ED sampler owns model loading and
     # never falls through to the non-LoRA grid path.
-    if x_type in LEGACY_LORA_TYPES and any(isinstance(value, XYLoraAxisValue) for value in x_values):
+    if x_type in LEGACY_LORA_TYPES and any(
+        isinstance(value, (XYLoraAxisValue, LegacyOverlayAxisValue)) for value in x_values
+    ):
         x_type = "ED_LORA_SWEEP_X"
-    if y_type in LEGACY_LORA_TYPES and any(isinstance(value, XYLoraAxisValue) for value in y_values):
+    if y_type in LEGACY_LORA_TYPES and any(
+        isinstance(value, (XYLoraAxisValue, LegacyOverlayAxisValue)) for value in y_values
+    ):
         y_type = "ED_LORA_SWEEP_Y"
 
     if (

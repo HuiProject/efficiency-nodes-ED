@@ -34,9 +34,9 @@ try:
 except ImportError:
     from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
 try:
-    from .xy_lora_compat import XYLoraAxisValue, merge_partial_stack
+    from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, merge_partial_stack
 except ImportError:
-    from xy_lora_compat import XYLoraAxisValue, merge_partial_stack
+    from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, merge_partial_stack
 try:
     from .xy_plot_ed import EDXYPlot
 except ImportError:
@@ -2249,7 +2249,7 @@ class KSampler_ED():
     def sample_lora_xy_grid_v2(context, xy, vae, latent_image, seed, steps, cfg,
                                sampler_name, scheduler, denoise, tiled_vae):
         x_type, x_values, y_type, y_values = xy[:4]
-        axis_classes = (EDLoraAxisValue, XYLoraAxisValue)
+        axis_classes = (EDLoraAxisValue, XYLoraAxisValue, LegacyOverlayAxisValue)
         x_axes = [v for v in (x_values or []) if isinstance(v, axis_classes)]
         y_axes = [v for v in (y_values or []) if isinstance(v, axis_classes)]
         if not x_axes:
@@ -2277,7 +2277,15 @@ class KSampler_ED():
         )
         if raw_positive is None or raw_negative is None:
             raise ValueError("ED LoRA XY Plot 缺少原始提示词上下文")
-        print(f"[XY-ED-V2] grid x={len(x_axes)}, y={len(y_axes)}, pipe={pipe.fingerprint}")
+        legacy_overlay_mode = any(
+            isinstance(axis, LegacyOverlayAxisValue)
+            for axis in x_axes + y_axes if axis is not None
+        )
+        print(
+            f"[XY-ED-V2] grid x={len(x_axes)}, y={len(y_axes)}, pipe={pipe.fingerprint}, "
+            f"legacy_overlay={legacy_overlay_mode}"
+        )
+        _, applied_model, applied_clip = context_2_tuple_ed(context, ["model", "clip"])
         images, latents = [], []
         for yi, y_axis in enumerate(y_axes, 1):
             for xi, x_axis in enumerate(x_axes, 1):
@@ -2289,7 +2297,44 @@ class KSampler_ED():
                 # resolved list, otherwise X/Y composition loses the target.
                 xv = x_axis.value if isinstance(x_axis, EDLoraAxisValue) else x_axis
                 yv = y_axis.value if isinstance(y_axis, EDLoraAxisValue) else y_axis
-                if isinstance(x_axis, XYLoraAxisValue) or isinstance(y_axis, XYLoraAxisValue):
+                if isinstance(x_axis, LegacyOverlayAxisValue) or isinstance(y_axis, LegacyOverlayAxisValue):
+                    # Historical LoRA Plot semantics: Power Loader has already
+                    # applied its stack to context.model/clip.  Apply only the
+                    # selected Plot entries again, preserving duplicate names
+                    # intentionally instead of replacing them in the pipe.
+                    overlay = {}
+                    for axis_value in (xv, yv):
+                        if not isinstance(axis_value, LegacyOverlayAxisValue):
+                            continue
+                        for key, (name, model_value, clip_value) in axis_value.overrides.items():
+                            current = overlay.setdefault(key, [name, None, None])
+                            if model_value is not None:
+                                current[1] = float(model_value)
+                            if clip_value is not None:
+                                current[2] = float(clip_value)
+                    defaults = {
+                        str(name).replace("/", "\\").casefold(): (float(model), float(clip))
+                        for name, model, clip in pipe.stack
+                    }
+                    overlay_stack = []
+                    for key, (name, model_value, clip_value) in overlay.items():
+                        default_model, default_clip = defaults.get(key, (1.0, 1.0))
+                        overlay_stack.append((
+                            name,
+                            default_model if model_value is None else model_value,
+                            default_clip if clip_value is None else clip_value,
+                        ))
+                    base_model = applied_model or pipe.applied_model or pipe.base_model
+                    base_clip = applied_clip or pipe.applied_clip or pipe.base_clip
+                    if base_model is None or base_clip is None:
+                        raise ValueError("ED legacy LoRA Plot overlay requires applied MODEL/CLIP in context")
+                    final_stack = overlay_stack
+                    cell_model, cell_clip = ED_Util.apply_load_lora(
+                        final_stack, base_model, base_clip,
+                        f"ED Legacy LoRA Plot [{yi},{xi}]",
+                    )
+                    final_fingerprint = stack_fingerprint(final_stack)
+                elif isinstance(x_axis, XYLoraAxisValue) or isinstance(y_axis, XYLoraAxisValue):
                     # Compatibility values already contain partial stack
                     # intent. Apply both axes to one immutable Power Loader
                     # stack, preserving row order and preventing accumulation.
@@ -2308,10 +2353,11 @@ class KSampler_ED():
                         )
                 else:
                     final_stack = combine_sweep_stacks(pipe, xp, xv, yp, yv)
-                cell_model, cell_clip = ED_Util.apply_load_lora(
-                    final_stack, pipe.base_model, pipe.base_clip,
-                    f"ED LoRA XY [{yi},{xi}]",
-                )
+                if not (isinstance(x_axis, LegacyOverlayAxisValue) or isinstance(y_axis, LegacyOverlayAxisValue)):
+                    cell_model, cell_clip = ED_Util.apply_load_lora(
+                        final_stack, pipe.base_model, pipe.base_clip,
+                        f"ED LoRA XY [{yi},{xi}]",
+                    )
                 cell_positive = BNK_EncoderWrapper.imp_encode(raw_positive, cell_clip, clip_encoder)
                 cell_negative = BNK_EncoderWrapper.imp_encode(raw_negative, cell_clip, clip_encoder)
                 if cnet_stack:
@@ -2323,7 +2369,11 @@ class KSampler_ED():
                 )[0]
                 latents.append(cell_latent)
                 images.append(ED_Util.vae_decode(vae, cell_latent, tiled_vae))
-                print(f"[XY-ED-V2] cell=({yi},{xi}) x={xv} y={yv} stack={stack_fingerprint(final_stack)}")
+                print(
+                    f"[XY-ED-V2] cell=({yi},{xi}) x={getattr(x_axis, 'label', xv)} "
+                    f"y={getattr(y_axis, 'label', yv)} stack={stack_fingerprint(final_stack)} "
+                    f"mode={'legacy-overlay' if legacy_overlay_mode else 'immutable'}"
+                )
         x_labels = [_compact_lora_label(axis.label) if axis else "X" for axis in x_axes]
         y_labels = [_compact_lora_label(axis.label) if axis else "Y" for axis in y_axes]
         grid = _render_ed_xy_grid(images, x_labels, y_labels, xy[4] if len(xy) > 4 else 0)
@@ -3258,10 +3308,13 @@ class PowerLoraLoaderStackED:
     def load_loras(self, model=None, clip=None, **kwargs):
         base_model, base_clip = model, clip
         stack = []
+        available_loras = []
         for key, value in kwargs.items():
             if not key.upper().startswith("LORA_") or not isinstance(value, dict):
                 continue
             name = value.get("lora")
+            if name and name not in available_loras:
+                available_loras.append(name)
             if not value.get("on") or not name:
                 continue
             sm = float(value.get("strength", 0.0))
@@ -3282,9 +3335,15 @@ class PowerLoraLoaderStackED:
                 setattr(obj, attr, value)
             except Exception:
                 pass
-        lora_pipe = EDLoraPipe(base_model, base_clip, model, clip, stack)
+        lora_pipe = EDLoraPipe(
+            base_model, base_clip, model, clip, stack,
+            available_loras=available_loras,
+        )
         context = new_context_ed(None, model=model, clip=clip, lora_pipe=lora_pipe)
-        print(f"[ED-CORE] Power Loader fingerprint={lora_pipe.fingerprint}; external plugin dependency: none")
+        print(
+            f"[ED-CORE] Power Loader fingerprint={lora_pipe.fingerprint}; "
+            f"available rows={len(lora_pipe.available_loras)}; external plugin dependency: none"
+        )
         return (context, lora_pipe, model, clip, stack)
 
 

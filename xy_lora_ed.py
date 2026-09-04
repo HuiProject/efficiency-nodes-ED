@@ -47,7 +47,8 @@ def normalize_sweep_rows(lora_count, row_values, max_rows=50):
 
 # <3> 保存 Power Loader 的基础对象、应用后对象和有序参数栈。
 class EDLoraPipe:
-    def __init__(self, base_model, base_clip, applied_model, applied_clip, stack):
+    def __init__(self, base_model, base_clip, applied_model, applied_clip, stack,
+                 available_loras=None):
         self.base_model = base_model
         self.base_clip = base_clip
         self.applied_model = applied_model
@@ -55,6 +56,13 @@ class EDLoraPipe:
         self.stack = [
             (str(name), float(model_strength), float(clip_strength))
             for name, model_strength, clip_strength in stack or []
+        ]
+        # Power Loader keeps disabled rows out of ``stack`` deliberately, but
+        # legacy LoRA Plot may select one of those rows as a second-layer
+        # overlay.  This metadata never participates in Sweep reconstruction.
+        self.available_loras = [
+            str(name) for name in (available_loras or [item[0] for item in self.stack])
+            if name not in (None, "", "None")
         ]
         self.fingerprint = stack_fingerprint(self.stack)
 
