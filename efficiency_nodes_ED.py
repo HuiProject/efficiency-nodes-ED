@@ -2261,8 +2261,12 @@ class KSampler_ED():
             raise ValueError("ED LoRA XY Plot 至少需要一个 Sweep 轴")
         pipe = getattr(source, "plan", None)
         pipe = getattr(pipe, "lora_pipe", None) if pipe is not None else None
-        if pipe is None:
-            pipe = context_2_tuple_ed(context, ["lora_pipe"])[1]
+        # A legacy workflow may connect only LORA_STACK to LoRA Plot.  Such a
+        # plan carries names/ranges but no model objects; execution must use
+        # the real immutable pipe exported by Efficient Loader/Power Loader.
+        context_pipe = context_2_tuple_ed(context, ["lora_pipe"])[1]
+        if pipe is None or getattr(pipe, "base_model", None) is None:
+            pipe = context_pipe
         if pipe is None:
             raise ValueError(
                 "ED LoRA XY Plot 需要连接 Power Lora Loader ED 的 LORA_PIPE；"

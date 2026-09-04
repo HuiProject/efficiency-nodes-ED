@@ -41,6 +41,11 @@ def compose_xyplot_script(grid_spacing, xy_flip, y_label_orientation,
     """Pack two XY axes into the legacy-compatible ED script tuple."""
     x_type, x_values = _unpack_axis(X)
     y_type, y_values = _unpack_axis(Y)
+    dependency_state = "connected" if dependencies is not None else "missing"
+    print(
+        f"[ED-XY-PLOT] compose X={x_type}:{len(x_values)} "
+        f"Y={y_type}:{len(y_values)} dependencies={dependency_state}"
+    )
 
     # ED's compatibility LoRA inputs return real axis objects rather than
     # plain lists.  Re-tag those axes so the ED sampler owns model loading and

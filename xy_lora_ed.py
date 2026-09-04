@@ -61,7 +61,19 @@ class EDLoraPipe:
 
 # <4> 保存一个目标 LoRA 的单轴扫描，不携带或修改模型对象。
 class EDLoraSweepPlan:
-    def __init__(self, lora_pipe, target_name, values, target_specs=None):
+    def __init__(self, lora_pipe, target_name, values, target_specs=None,
+                 axis_mode="both"):
+        """Create an immutable scan plan.
+
+        ``axis_mode`` is ``both`` for the existing LoRA Sweep node, and may be
+        ``model``/``clip`` for the ED LoRA Plot adapter.  The latter two modes
+        deliberately override only one half of a LoRA pair so an X/Y plot can
+        reproduce the two-dimensional model-vs-clip workflow without applying
+        either axis twice.
+        """
+        axis_mode = str(axis_mode or "both").lower()
+        if axis_mode not in {"both", "model", "clip"}:
+            raise ValueError(f"unsupported LoRA sweep axis mode: {axis_mode}")
         requested = [target_name] if isinstance(target_name, str) else list(target_name or [])
         if target_specs:
             requested = [spec[0] for spec in target_specs]
@@ -80,6 +92,7 @@ class EDLoraSweepPlan:
             raise ValueError("LoRA 扫描至少需要一个强度值")
 
         self.lora_pipe = lora_pipe
+        self.axis_mode = axis_mode
         self.targets = targets
         self.target_names = [item[0] for item in targets]
         self.target_name = ", ".join(self.target_names)
@@ -100,23 +113,39 @@ class EDLoraSweepPlan:
                 count = max(1, len(self.values))
                 value = first if count == 1 else first + (last - first) * index / (count - 1)
                 overrides[normalize_name(target[0])] = value
-                labels.append(f"{target[0]}={value:.6g}")
+                suffix = {"model": " M", "clip": " C", "both": ""}[self.axis_mode]
+                labels.append(f"{target[0]}{suffix}={value:.6g}")
             result.append(EDLoraAxisValue(self, overrides, ", ".join(labels)))
         return result
 
     def stack_for_value(self, value):
         """只替换目标项，严格保留其他项目的顺序与强度。"""
         if isinstance(value, dict):
-            overrides = {normalize_name(k): float(v) for k, v in value.items()}
+            overrides = {normalize_name(k): v for k, v in value.items()}
         else:
-            overrides = {normalize_name(name): float(value) for name in self.target_names}
+            overrides = {normalize_name(name): value for name in self.target_names}
         target_keys = set(overrides)
-        return [
-            (name, overrides[normalize_name(name)], overrides[normalize_name(name)])
-            if normalize_name(name) in target_keys
-            else (name, float(model_strength), float(clip_strength))
-            for name, model_strength, clip_strength in self.lora_pipe.stack
-        ]
+        result = []
+        for name, model_strength, clip_strength in self.lora_pipe.stack:
+            key = normalize_name(name)
+            if key not in target_keys:
+                result.append((name, float(model_strength), float(clip_strength)))
+                continue
+            raw = overrides[key]
+            if isinstance(raw, (tuple, list)) and len(raw) >= 2:
+                model_override, clip_override = raw[0], raw[1]
+            elif self.axis_mode == "model":
+                model_override, clip_override = raw, None
+            elif self.axis_mode == "clip":
+                model_override, clip_override = None, raw
+            else:
+                model_override = clip_override = raw
+            result.append((
+                name,
+                float(model_strength) if model_override is None else float(model_override),
+                float(clip_strength) if clip_override is None else float(clip_override),
+            ))
+        return result
 
 
 class EDLoraAxisValue:
@@ -129,6 +158,9 @@ class EDLoraAxisValue:
 
 def combine_sweep_stacks(base_pipe, x_plan, x_value, y_plan=None, y_value=None):
     """Apply X and Y overrides to one immutable loader stack, preserving order."""
+    # Store a pair of optional fields per normalized name.  This lets a model
+    # axis and a clip axis target the same LoRA intentionally while still
+    # rejecting conflicting overrides of the same field.
     overrides = {}
     for plan, value in ((x_plan, x_value), (y_plan, y_value)):
         if plan is None:
@@ -136,14 +168,50 @@ def combine_sweep_stacks(base_pipe, x_plan, x_value, y_plan=None, y_value=None):
         pairs = value.items() if isinstance(value, dict) else ((name, value) for name in plan.target_names)
         for target_name, target_value in pairs:
             key = normalize_name(target_name)
-            if key in overrides and abs(overrides[key] - float(target_value)) > 1e-9:
-                raise ValueError(f"X/Y sweep targets the same LoRA with different values: {target_name}")
-            overrides[key] = float(target_value)
+            if isinstance(target_value, (tuple, list)) and len(target_value) >= 2:
+                model_value, clip_value = target_value[0], target_value[1]
+            elif getattr(plan, "axis_mode", "both") == "model":
+                model_value, clip_value = target_value, None
+            elif getattr(plan, "axis_mode", "both") == "clip":
+                model_value, clip_value = None, target_value
+            else:
+                model_value = clip_value = target_value
+            current = overrides.setdefault(key, [None, None])
+            for position, incoming in enumerate((model_value, clip_value)):
+                if incoming is None:
+                    continue
+                incoming = float(incoming)
+                if current[position] is not None and abs(current[position] - incoming) > 1e-9:
+                    field = "model" if position == 0 else "clip"
+                    raise ValueError(
+                        f"X/Y sweep targets the same LoRA {field} strength with different values: {target_name}"
+                    )
+                current[position] = incoming
     return [
-        (name, overrides.get(normalize_name(name), float(model_strength)),
-         overrides.get(normalize_name(name), float(clip_strength)))
+        (name,
+         float(model_strength) if overrides.get(normalize_name(name), [None, None])[0] is None
+         else overrides[normalize_name(name)][0],
+         float(clip_strength) if overrides.get(normalize_name(name), [None, None])[1] is None
+         else overrides[normalize_name(name)][1])
         for name, model_strength, clip_strength in base_pipe.stack
     ]
+
+
+def normalize_plot_rows(lora_count, row_values, max_rows=50):
+    """Return enabled target names for the compact LoRA Plot UI.
+
+    Plot ranges are node-level X/Y values, so rows intentionally carry only a
+    name and toggle.  Accepting the Sweep row keys as aliases keeps workflows
+    migrated from the Stacker-style editor readable without duplicating rows.
+    """
+    count = max(0, min(int(lora_count or 0), int(max_rows)))
+    rows = []
+    for index in range(1, count + 1):
+        name = row_values.get(f"scan_lora_name_{index}")
+        enabled = row_values.get(f"scan_lora_{index}_toggle", True)
+        if enabled and name not in (None, "", "None"):
+            rows.append(str(name))
+    return count, rows
 
 
 # <5> 生成包含首尾值的等距扫描。
