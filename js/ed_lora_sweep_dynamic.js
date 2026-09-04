@@ -51,7 +51,9 @@ function hideWidget(item) {
     item.__edSweepHidden = true;
     item.__edSweepOriginalType = item.type;
     item.__edSweepOriginalComputeSize = item.computeSize;
-    item.type = "hidden";
+    // Match ComfyUI/ED's hidden-widget convention.  The frontend renders a
+    // plain `hidden` type, leaving stale fields visible after node movement.
+    item.type = "tschide";
     item.computeSize = () => [0, -4];
 }
 

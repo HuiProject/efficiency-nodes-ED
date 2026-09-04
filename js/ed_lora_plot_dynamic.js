@@ -50,7 +50,10 @@ function hideWidget(item) {
     item.__edPlotHidden = true;
     item.__edPlotOriginalType = item.type;
     item.__edPlotOriginalComputeSize = item.computeSize;
-    item.type = "hidden";
+    // `tschide` is ComfyUI's supported hidden-widget type (the ED utility
+    // uses the same prefix).  A plain `hidden` type is still drawn by the
+    // 1.47 frontend, which is why old fields reappeared outside the node.
+    item.type = "tschide";
     item.computeSize = () => [0, -4];
 }
 
@@ -124,7 +127,14 @@ class PlotLoraRowWidget {
     draw(ctx, node, width, y, height) {
         const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
         const left = 15;
-        const boxWidth = Math.max(80, width - left * 2);
+        // LiteGraph may pass a stale width after a node is moved/resized. Use
+        // the live node width as the upper bound so this model bar always has
+        // the same inner margins as the numeric bars and never protrudes from
+        // the node frame.
+        const liveWidth = Number(node?.size?.[0]);
+        const innerWidth = Number.isFinite(liveWidth) && liveWidth > 52
+            ? liveWidth - 52 : (width || 220) - left * 2;
+        const boxWidth = Math.max(80, innerWidth);
         const centerY = y + h * 0.5;
         const toggleWidth = h * 1.45;
         this.y = y;
