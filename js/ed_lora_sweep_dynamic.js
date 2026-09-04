@@ -55,6 +55,32 @@ function hideWidget(item) {
     item.computeSize = () => [0, -4];
 }
 
+// Vanilla LiteGraph in ComfyUI 0.30.2 has no stable removeWidget method on
+// every node class.  The old index-only call could throw while lowering
+// lora_count, removing the remaining rows from the canvas.  Prefer the node
+// API when available and fall back to a direct, deterministic splice.
+function removeWidgetSafe(node, item) {
+    if (!item || !Array.isArray(node.widgets)) return;
+    const index = node.widgets.indexOf(item);
+    if (index < 0) return;
+    if (typeof node.removeWidget === "function") {
+        try {
+            node.removeWidget(item);
+            if (!node.widgets.includes(item)) return;
+        } catch (error) {
+            console.debug("[ED-UI] Sweep removeWidget fallback", error);
+        }
+    }
+    node.widgets.splice(index, 1);
+    item.onRemove?.();
+}
+
+function countValue(value, fallback) {
+    const candidate = value && typeof value === "object" ? value.value : value;
+    const parsed = Number(candidate);
+    return Number.isFinite(parsed) ? parsed : Number(fallback) || 0;
+}
+
 function showWidget(item) {
     if (!item?.__edSweepHidden) return;
     item.type = item.__edSweepOriginalType;
@@ -79,12 +105,15 @@ function addRow(node, index, values = {}) {
     const choices = connectedStackNames(node) || ["None"];
     const name = node.addWidget("combo", `scan_lora_name_${index}`,
         values.name ?? "None", () => {}, { values: choices, serialize: true });
+    name.label = `L${index}`;
     const toggle = node.addWidget("toggle", `scan_lora_${index}_toggle`,
         values.toggle ?? true, () => {}, { serialize: true });
     const first = node.addWidget("number", `scan_lora_first_strength_${index}`,
         Number(values.first ?? 0.5), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
     const last = node.addWidget("number", `scan_lora_last_strength_${index}`,
         Number(values.last ?? 1.0), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
+    first.label = `L${index} Strength 起`;
+    last.label = `L${index} Strength 止`;
     for (const item of [name, toggle, first, last]) {
         if (item) item.serialize = true;
     }
@@ -96,8 +125,7 @@ function removeRow(node, index) {
     // Remove in reverse order so widget indexes remain stable.
     for (const item of [parts.last, parts.first, parts.toggle, parts.name]) {
         if (!item) continue;
-        const widgetIndex = node.widgets?.indexOf(item);
-        if (widgetIndex >= 0) node.removeWidget(widgetIndex);
+        removeWidgetSafe(node, item);
     }
 }
 
@@ -191,8 +219,10 @@ function initialize(node) {
         const originalCallback = countWidget.callback;
         countWidget.callback = function (value) {
             originalCallback?.apply(this, arguments);
-            ensureRows(node, value);
+            const current = countValue(value, countWidget.value);
+            ensureRows(node, current);
             refreshChoices(node);
+            console.debug("[ED-UI] Sweep count changed", { node: node.id, count: current });
         };
     }
 

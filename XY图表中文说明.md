@@ -43,6 +43,9 @@
   `Power Lora Loader ED`，连接变化后会自动刷新并保留仍有效的选择。
 - 旧工作流没有行级范围时，隐藏的全局 `X_first_value`、`X_last_value`、
   `Y_first_value`、`Y_last_value` 会作为兼容回退值。
+- 界面标签统一为 `L1 MStr 起/止`（第 1 个 LoRA 的模型强度）和
+  `L1 CStr 起/止`（第 1 个 LoRA 的 CLIP 强度）；第 2 个 LoRA 对应 `L2`。
+  后端仍保留 `scan_lora_*` 名称用于旧工作流，但不会在节点中显示。
 
 目标 LoRA 在 Power Loader 中的状态：
 

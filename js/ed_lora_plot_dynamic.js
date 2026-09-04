@@ -54,6 +54,32 @@ function hideWidget(item) {
     item.computeSize = () => [0, -4];
 }
 
+// ComfyUI 0.30.2 uses the vanilla LiteGraph node for ED nodes; unlike
+// rgthree's BaseNode it does not always expose removeWidget().  Calling the
+// optional method unconditionally made lowering lora_count throw and left a
+// visually empty/broken node.  Keep removal local and accept either API.
+function removeWidgetSafe(node, item) {
+    if (!item || !Array.isArray(node.widgets)) return;
+    const index = node.widgets.indexOf(item);
+    if (index < 0) return;
+    if (typeof node.removeWidget === "function") {
+        try {
+            node.removeWidget(item);
+            if (!node.widgets.includes(item)) return;
+        } catch (error) {
+            console.debug("[ED-UI] Plot removeWidget fallback", error);
+        }
+    }
+    node.widgets.splice(index, 1);
+    item.onRemove?.();
+}
+
+function countValue(value, fallback) {
+    const candidate = value && typeof value === "object" ? value.value : value;
+    const parsed = Number(candidate);
+    return Number.isFinite(parsed) ? parsed : Number(fallback) || 0;
+}
+
 function openChoices(event, choices, callback) {
     new LiteGraph.ContextMenu(choices || ["None"], {
         event,
@@ -194,24 +220,27 @@ function addRow(node, index, saved = {}) {
     const base = { ...defaults(node), ...saved };
     const combo = node.addWidget("combo", `scan_lora_name_${index}`, base.name ?? "None",
         () => {}, { values: connectedStackNames(node) || ["None"], serialize: true });
+    // The backend name is retained for graph serialization, but the visible
+    // label is supplied by PlotLoraRowWidget.  This prevents the raw
+    // scan_lora_name_N title from being drawn on top of the selected model.
+    combo.label = "";
     const toggle = node.addWidget("toggle", `scan_lora_${index}_toggle`,
         base.toggle ?? true, () => {}, { serialize: true });
     const row = new PlotLoraRowWidget(combo, toggle, node, index);
     const comboIndex = node.widgets.indexOf(combo);
     if (comboIndex >= 0) node.widgets[comboIndex] = row;
     hideWidget(toggle);
-    addNumber(node, `scan_lora_x_first_strength_${index}`, "X 起", base.xFirst);
-    addNumber(node, `scan_lora_x_last_strength_${index}`, "X 止", base.xLast);
-    addNumber(node, `scan_lora_y_first_strength_${index}`, "Y 起", base.yFirst);
-    addNumber(node, `scan_lora_y_last_strength_${index}`, "Y 止", base.yLast);
+    addNumber(node, `scan_lora_x_first_strength_${index}`, `L${index} MStr 起`, base.xFirst);
+    addNumber(node, `scan_lora_x_last_strength_${index}`, `L${index} MStr 止`, base.xLast);
+    addNumber(node, `scan_lora_y_first_strength_${index}`, `L${index} CStr 起`, base.yFirst);
+    addNumber(node, `scan_lora_y_last_strength_${index}`, `L${index} CStr 止`, base.yLast);
     console.debug("[ED-UI] LoRA Plot row created", { node: node.id, index, lora: row.value });
 }
 
 function removeRow(node, index) {
     const row = rowWidgets(node, index);
     for (const item of [row.yLast, row.yFirst, row.xLast, row.xFirst, row.toggle, row.selector]) {
-        const at = node.widgets?.indexOf(item);
-        if (at >= 0) node.removeWidget(at);
+        removeWidgetSafe(node, item);
     }
 }
 
@@ -224,7 +253,9 @@ function ensureRows(node, requested) {
     const current = indexes.length ? Math.max(...indexes) : 0;
     for (let index = current + 1; index <= count; index += 1) addRow(node, index);
     for (let index = current; index > count; index -= 1) removeRow(node, index);
-    node.setSize([node.size[0], Math.max(140, node.computeSize()[1])]);
+    const width = node.size?.[0] || 220;
+    const computed = typeof node.computeSize === "function" ? node.computeSize() : [width, 140];
+    node.setSize?.([width, Math.max(140, computed[1] || 0)]);
     node.setDirtyCanvas(true, true);
     return count;
 }
@@ -305,9 +336,10 @@ function initialize(node) {
         const original = count.callback;
         count.callback = function(value) {
             const result = original?.apply(this, arguments);
-            ensureRows(node, value);
+            const current = countValue(value, count.value);
+            ensureRows(node, current);
             refreshChoices(node);
-            console.debug("[ED-UI] LoRA Plot count changed", { node: node.id, count: Number(value) });
+            console.debug("[ED-UI] LoRA Plot count changed", { node: node.id, count: current });
             return result;
         };
     }
