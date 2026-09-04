@@ -23,6 +23,11 @@ its own selected rows/ranges; its `batch_count` is shared by all of its rows.
 Targets must be enabled in the actual `lora_pipe` (an enabled target may have
 strength `0`, allowing a zero-to-positive sweep).
 
+Each row's LoRA selector is a single node-owned bar combining the Power
+Loader-style enable toggle and dropdown. Existing saved combo/toggle rows are
+upgraded to this same bar when the workflow opens; the serialized backend
+fields remain `scan_lora_name_N` and `scan_lora_N_toggle` for compatibility.
+
 ## Outputs
 
 - `SCRIPT`: direct one-axis execution plan for a KSampler ED script input.

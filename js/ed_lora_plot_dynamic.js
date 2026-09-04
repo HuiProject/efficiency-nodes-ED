@@ -137,9 +137,13 @@ class PlotLoraRowWidget {
         // the same inner margins as the numeric bars and never protrudes from
         // the node frame.
         const liveWidth = Number(node?.size?.[0]);
-        const innerWidth = Number.isFinite(liveWidth) && liveWidth > 52
-            ? liveWidth - 52 : (width || 220) - left * 2;
-        const boxWidth = Math.max(80, innerWidth);
+        const widgetWidth = Number(width);
+        // Native combo/number widgets draw from x=15 to node-width-15. Use
+        // that same contract; subtracting an extra 52px made the model bar
+        // visibly shorter than every other parameter bar.
+        const availableWidth = Number.isFinite(widgetWidth) && widgetWidth > 0
+            ? widgetWidth : liveWidth;
+        const boxWidth = Math.max(80, (availableWidth || 220) - left * 2);
         const centerY = y + h * 0.5;
         const toggleWidth = h * 1.45;
         this.y = y;

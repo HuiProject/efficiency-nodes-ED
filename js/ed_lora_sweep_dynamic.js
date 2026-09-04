@@ -88,6 +88,113 @@ function countValue(value, fallback) {
     return Number.isFinite(parsed) ? parsed : Number(fallback) || 0;
 }
 
+function openChoices(event, choices, callback) {
+    new LiteGraph.ContextMenu(choices || ["None"], {
+        event,
+        scale: Math.max(1, app.canvas?.ds?.scale ?? 1),
+        className: "dark",
+        callback: value => {
+            if (typeof value === "string") callback(value);
+        },
+    });
+}
+
+function fitText(ctx, value, width) {
+    let text = String(value || "None");
+    if (ctx.measureText(text).width <= width) return text;
+    while (text.length > 1 && ctx.measureText(`${text}…`).width > width) text = text.slice(0, -1);
+    return `${text}…`;
+}
+
+class SweepLoraRowWidget {
+    constructor(combo, toggle, node, index) {
+        this.name = combo.name;
+        this.label = `LoRA ${index}`;
+        this.value = combo.value ?? "None";
+        this.options = combo.options || { values: ["None"] };
+        this.node = node;
+        this.toggleWidget = toggle;
+        this.index = index;
+        this.type = "ed_sweep_lora_row";
+        this.serialize = true;
+        this.y = 0;
+        this.last_y = 0;
+    }
+
+    get enabled() { return this.toggleWidget?.value !== false; }
+    computeSize(width) { return [width || 220, LiteGraph.NODE_WIDGET_HEIGHT]; }
+    serializeValue() { return this.value; }
+
+    draw(ctx, node, width, y, height) {
+        const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
+        const left = 15;
+        const available = Number(width) > 0 ? Number(width) : Number(node?.size?.[0]) || 220;
+        const boxWidth = Math.max(80, available - left * 2);
+        const centerY = y + h * 0.5;
+        const toggleWidth = h * 1.45;
+        this.y = y;
+        this.last_y = y;
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(left, y, boxWidth, h, [h * 0.5]);
+        ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+        ctx.fill();
+        ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
+        ctx.stroke();
+        ctx.fillStyle = this.enabled ? "#89B" : "#777";
+        ctx.beginPath();
+        ctx.roundRect(left + 5, y + 5, toggleWidth - 10, h - 10, [h * 0.5]);
+        ctx.fill();
+        ctx.fillStyle = "#DDD";
+        ctx.beginPath();
+        ctx.arc(left + (this.enabled ? toggleWidth - h * 0.5 : h * 0.5), centerY,
+            h * 0.27, 0, Math.PI * 2);
+        ctx.fill();
+        if (!this.enabled) ctx.globalAlpha = app.canvas.editor_alpha * 0.45;
+        ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR || "#999";
+        ctx.textAlign = "left";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.label, left + toggleWidth + 5, centerY);
+        const valueWidth = boxWidth - toggleWidth - 62;
+        ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+        ctx.textAlign = "right";
+        ctx.fillText(fitText(ctx, this.value, valueWidth), left + boxWidth - 9, centerY);
+        ctx.restore();
+    }
+
+    mouse(event, pos, node) {
+        if (event.type !== "pointerdown") return false;
+        const toggleLimit = 15 + LiteGraph.NODE_WIDGET_HEIGHT * 1.45;
+        if (pos[0] <= toggleLimit) {
+            if (this.toggleWidget) this.toggleWidget.value = !this.enabled;
+            console.debug("[ED-UI] Sweep row toggled", { node: node.id, index: this.index, enabled: this.enabled });
+        } else {
+            openChoices(event, this.options?.values, value => {
+                this.value = value;
+                console.debug("[ED-UI] Sweep row selected", { node: node.id, index: this.index, lora: value });
+                node.setDirtyCanvas(true, true);
+            });
+        }
+        node.setDirtyCanvas(true, true);
+        return true;
+    }
+}
+
+function upgradeExistingRow(node, index) {
+    const selector = widget(node, `scan_lora_name_${index}`);
+    const toggle = widget(node, `scan_lora_${index}_toggle`);
+    if (selector && selector.type !== "ed_sweep_lora_row") {
+        const row = new SweepLoraRowWidget(selector, toggle, node, index);
+        row.value = selector.value ?? "None";
+        row.options = selector.options || { values: ["None"] };
+        selector.label = "";
+        const at = node.widgets.indexOf(selector);
+        if (at >= 0) node.widgets[at] = row;
+        console.debug("[ED-UI] upgraded restored Sweep LoRA row", { node: node.id, index, lora: row.value });
+    }
+    hideWidget(toggle);
+}
+
 function showWidget(item) {
     if (!item?.__edSweepHidden) return;
     item.type = item.__edSweepOriginalType;
@@ -114,9 +221,13 @@ function addRow(node, index, values = {}) {
     const choices = connectedStackNames(node) || ["None"];
     const name = node.addWidget("combo", `scan_lora_name_${index}`,
         values.name ?? "None", () => {}, { values: choices, serialize: true });
-    name.label = `L${index}`;
+    name.label = "";
     const toggle = node.addWidget("toggle", `scan_lora_${index}_toggle`,
         values.toggle ?? true, () => {}, { serialize: true });
+    const row = new SweepLoraRowWidget(name, toggle, node, index);
+    const nameIndex = node.widgets.indexOf(name);
+    if (nameIndex >= 0) node.widgets[nameIndex] = row;
+    hideWidget(toggle);
     const first = node.addWidget("number", `scan_lora_first_strength_${index}`,
         Number(values.first ?? 0.5), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
     const last = node.addWidget("number", `scan_lora_last_strength_${index}`,
@@ -148,6 +259,7 @@ function ensureRows(node, requested) {
     const current = existing.length ? Math.max(...existing) : 0;
     for (let index = current + 1; index <= count; index++) addRow(node, index);
     for (let index = current; index > count; index--) removeRow(node, index);
+    for (let index = 1; index <= count; index++) upgradeExistingRow(node, index);
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
     return count;
