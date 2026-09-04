@@ -128,8 +128,16 @@ class SweepLoraRowWidget {
     draw(ctx, node, width, y, height) {
         const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
         const left = 15;
-        const available = Number(width) > 0 ? Number(width) : Number(node?.size?.[0]) || 220;
-        const boxWidth = Math.max(80, available - left * 2);
+        // Use the node frame rather than LiteGraph's transient widget width.
+        // During lora_pipe connection/selection the latter may be stale or
+        // include combo-list padding, which made this row extend outside the
+        // node. Native widgets occupy x=15 .. node.size[0]-15.
+        const liveWidth = Number(node?.size?.[0]);
+        const fallbackWidth = Number(width);
+        const frameWidth = Number.isFinite(liveWidth) && liveWidth > 0
+            ? liveWidth
+            : (Number.isFinite(fallbackWidth) && fallbackWidth > 0 ? fallbackWidth : 220);
+        const boxWidth = Math.max(80, frameWidth - left * 2);
         const centerY = y + h * 0.5;
         const toggleWidth = h * 1.45;
         this.y = y;

@@ -132,18 +132,17 @@ class PlotLoraRowWidget {
     draw(ctx, node, width, y, height) {
         const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
         const left = 15;
-        // LiteGraph may pass a stale width after a node is moved/resized. Use
-        // the live node width as the upper bound so this model bar always has
-        // the same inner margins as the numeric bars and never protrudes from
-        // the node frame.
+        // LiteGraph 0.30.x can pass a stale widget width while a connection
+        // or combo list is being rebuilt. Native widgets always use the node
+        // frame (x=15 .. node.size[0]-15), so derive the row width from that
+        // frame and never from the transient `width` argument. This prevents
+        // a selected/connected model row from protruding beyond the node.
         const liveWidth = Number(node?.size?.[0]);
-        const widgetWidth = Number(width);
-        // Native combo/number widgets draw from x=15 to node-width-15. Use
-        // that same contract; subtracting an extra 52px made the model bar
-        // visibly shorter than every other parameter bar.
-        const availableWidth = Number.isFinite(widgetWidth) && widgetWidth > 0
-            ? widgetWidth : liveWidth;
-        const boxWidth = Math.max(80, (availableWidth || 220) - left * 2);
+        const fallbackWidth = Number(width);
+        const frameWidth = Number.isFinite(liveWidth) && liveWidth > 0
+            ? liveWidth
+            : (Number.isFinite(fallbackWidth) && fallbackWidth > 0 ? fallbackWidth : 220);
+        const boxWidth = Math.max(80, frameWidth - left * 2);
         const centerY = y + h * 0.5;
         const toggleWidth = h * 1.45;
         this.y = y;
