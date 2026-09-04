@@ -33,6 +33,17 @@
 
 它的 `MStr` / `CStr` 标签只表示**第二次加载**的强度，不代表最终的总效果。
 
+### 每个 LoRA 独立范围
+
+- `X_batch_count` 与 `Y_batch_count` 仍是整个图表共用的列数/行数。
+- 每个已添加的 LoRA 行各自拥有 `X 起`、`X 止`、`Y 起`、`Y 止` 四个强度值。
+- 图表在同一归一化位置（0→1）分别插值每一行的范围，因此 `lora_count=2`
+  时两个 LoRA 可以使用不同的 X/Y 起止值，但仍生成同一个矩形网格。
+- 行的名称与启用开关在界面上合并为一个节点内控件；候选列表只来自已连接的
+  `Power Lora Loader ED`，连接变化后会自动刷新并保留仍有效的选择。
+- 旧工作流没有行级范围时，隐藏的全局 `X_first_value`、`X_last_value`、
+  `Y_first_value`、`Y_last_value` 会作为兼容回退值。
+
 目标 LoRA 在 Power Loader 中的状态：
 
 | 状态 | 第一次（Power Loader） | 第二次（Plot） | 适合用途 |

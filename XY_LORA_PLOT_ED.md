@@ -3,16 +3,24 @@
 `XY Input: LoRA Plot` is an ED-owned two-axis composer for the historical
 **post-stack overlay** behavior. Connect
 `Power Lora Loader 💬ED (LORA_STACK).LORA_PIPE` to its `lora_pipe` input,
-set `lora_count`, and choose rows from the connected stack. X scans model
-strength (`X_first_value` → `X_last_value`); Y scans clip strength
-(`Y_first_value` → `Y_last_value`). The same selected rows are applied to the
-model/CLIP that Power Loader has **already** modified. This intentionally
-loads the selected LoRA layer a second time and therefore differs from
-`XY Input: LoRA Sweep 💬ED`.
+set `lora_count`, and choose rows from the connected stack. `X_batch_count`
+and `Y_batch_count` are shared grid dimensions; each selected row has its own
+four range controls (`X 起`, `X 止`, `Y 起`, `Y 止`). At each normalized grid
+position, that row is interpolated from its own X/Y range. The same selected
+rows are applied to the model/CLIP that Power Loader has **already** modified.
+This intentionally loads the selected LoRA layer a second time and therefore
+differs from `XY Input: LoRA Sweep 💬ED`.
+
+The four hidden `X_first_value`, `X_last_value`, `Y_first_value`, and
+`Y_last_value` widgets are compatibility fallbacks for old saved workflows.
+New rows serialize their explicit ranges; changing a global fallback does not
+overwrite a row that already has explicit values.
 
 The selector can include disabled Power Loader rows: they are not part of the
 first stack application, but are valid second-layer overlay targets. It cannot
-select a LoRA absent from the connected Power Loader's rows.
+select a LoRA absent from the connected Power Loader's rows. The selector is a
+node-owned LiteGraph widget, so the selected value persists in the workflow;
+it is not a page-level floating menu.
 
 ## Target state in Power Loader
 
@@ -31,7 +39,9 @@ The two states intentionally produce different images. The legacy overlay
 sampler logs the target state through the Power Loader stack count and always
 prints `mode=legacy-overlay` per generated cell.
 
-Connect the node's `X` and `Y` outputs to the matching `XY Plot` inputs.
+Connect the node's `X` and `Y` outputs to the matching `XY Plot` inputs. With
+`lora_count=2`, both rows are applied at every cell, each using its own four
+range values; the node does not create a permanently tall set of unused rows.
 Connect `XY Plot.dependencies` to `Efficient Loader 💬ED.DEPENDENCIES` when
 using encoded legacy axes or when retaining the loader metadata in saved
 workflows. The sampler uses ED-local core APIs only; it does not import another
@@ -65,7 +75,7 @@ socket unconnected unless another ED node explicitly accepts
 Boundary logs use the following prefixes:
 
 ```text
-[ED-XY-PLOT] stack count=... targets=... X values=... Y values=...
+[ED-XY-PLOT] stack count=... rows=... X values=... Y values=...
 [ED-XY-PLOT] compose X=... Y=... dependencies=connected|missing
 [XY-ED-V2] cell=(row,column) ... stack=<fingerprint>
 ```

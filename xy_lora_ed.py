@@ -222,6 +222,41 @@ def normalize_plot_rows(lora_count, row_values, max_rows=50):
     return count, rows
 
 
+def _plot_float(row_values, key, fallback):
+    """Read one persisted Plot range value without breaking old workflows."""
+    value = row_values.get(key, fallback)
+    if value is None:
+        value = fallback
+    return float(value)
+
+
+def normalize_plot_range_rows(lora_count, row_values, x_first_default,
+                              x_last_default, y_first_default, y_last_default,
+                              max_rows=50):
+    """Return enabled Plot rows with their own X/Y ranges.
+
+    The first compact Plot revision had one shared X range and one shared Y
+    range.  Those values remain fallbacks so saved workflows retain exactly
+    their old output.  New rows serialize four explicit fields, letting every
+    selected LoRA interpolate independently at the same X/Y batch index.
+    """
+    count = max(0, min(int(lora_count or 0), int(max_rows)))
+    rows = []
+    for index in range(1, count + 1):
+        name = row_values.get(f"scan_lora_name_{index}")
+        enabled = row_values.get(f"scan_lora_{index}_toggle", True)
+        if not enabled or name in (None, "", "None"):
+            continue
+        rows.append((
+            str(name),
+            _plot_float(row_values, f"scan_lora_x_first_strength_{index}", x_first_default),
+            _plot_float(row_values, f"scan_lora_x_last_strength_{index}", x_last_default),
+            _plot_float(row_values, f"scan_lora_y_first_strength_{index}", y_first_default),
+            _plot_float(row_values, f"scan_lora_y_last_strength_{index}", y_last_default),
+        ))
+    return count, rows
+
+
 # <5> 生成包含首尾值的等距扫描。
 def generate_sweep_values(count, first_value, last_value):
     count = int(count)

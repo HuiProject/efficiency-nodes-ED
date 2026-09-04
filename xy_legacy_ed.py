@@ -16,11 +16,17 @@ import folder_paths
 try:
     from .xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
     from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
-    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, normalize_plot_rows
+    from .xy_lora_ed import (
+        EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
+        normalize_plot_rows, normalize_plot_range_rows,
+    )
 except ImportError:  # pragma: no cover - direct development import
     from xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
     from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
-    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, generate_sweep_values, normalize_plot_rows
+    from xy_lora_ed import (
+        EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
+        normalize_plot_rows, normalize_plot_range_rows,
+    )
 
 
 LORA_MODES = ["LoRA Names", "LoRA Names+Weights", "LoRA Batch"]
@@ -241,8 +247,13 @@ class LegacyXYLoraPlotED:
         if not base_stack:
             raise ValueError("ED LoRA Plot requires a connected Power Loader ED LORA_PIPE/LORA_STACK")
 
-        _, names = normalize_plot_rows(lora_count, kwargs, self.MAX_SCAN_LORAS)
-        if not names:
+        _, rows = normalize_plot_range_rows(
+            lora_count, kwargs,
+            X_first_value, X_last_value, Y_first_value, Y_last_value,
+            self.MAX_SCAN_LORAS,
+        )
+        names = [row[0] for row in rows]
+        if not rows:
             raise ValueError("ED LoRA Plot 至少需要一个已启用的 LoRA 行")
         error = _validate_plot_targets(names, base_stack, lora_pipe)
         if error:
@@ -252,35 +263,32 @@ class LegacyXYLoraPlotED:
         # the model/clip already produced by Power Loader and applies the
         # selected LoRAs a second time.  X changes model strength only and Y
         # changes clip strength only; the sampler combines both markers.
-        x_values = generate_sweep_values(X_batch_count, X_first_value, X_last_value)
-        y_values = generate_sweep_values(Y_batch_count, Y_first_value, Y_last_value)
-        defaults = {
-            str(name).replace("/", "\\").casefold(): (float(model), float(clip))
-            for name, model, clip in base_stack
-        }
+        # Each row owns four range values.  X/Y batch counts remain shared so
+        # the node still forms one rectangular XY grid; a normalized batch
+        # position is interpolated separately for every selected LoRA.
+        x_positions = generate_sweep_values(X_batch_count, 0.0, 1.0)
+        y_positions = generate_sweep_values(Y_batch_count, 0.0, 1.0)
 
-        def overlay_values(value, field):
+        def overlay_values(position, field):
             entries = []
-            for name in names:
-                model, clip = defaults.get(
-                    str(name).replace("/", "\\").casefold(), (1.0, 1.0)
-                )
+            labels = []
+            for name, x_first, x_last, y_first, y_last in rows:
                 if field == "model":
-                    model = float(value)
+                    value = x_first + (x_last - x_first) * float(position)
+                    entries.append((name, float(value), None))
                 else:
-                    clip = float(value)
-                entries.append((name, model if field == "model" else None,
-                                clip if field == "clip" else None))
+                    value = y_first + (y_last - y_first) * float(position)
+                    entries.append((name, None, float(value)))
+                suffix = "MStr" if field == "model" else "CStr"
+                labels.append(f"{name} {suffix}={float(value):.6g}")
             suffix = "MStr" if field == "model" else "CStr"
-            return LegacyOverlayAxisValue(entries, ", ".join(
-                f"{name} {suffix}={float(value):.6g}" for name in names
-            ))
+            return LegacyOverlayAxisValue(entries, ", ".join(labels))
 
-        x_axis = ("LoRA MStr", [overlay_values(value, "model") for value in x_values])
-        y_axis = ("LoRA CStr", [overlay_values(value, "clip") for value in y_values])
+        x_axis = ("LoRA MStr", [overlay_values(position, "model") for position in x_positions])
+        y_axis = ("LoRA CStr", [overlay_values(position, "clip") for position in y_positions])
         print(
             f"[ED-XY-PLOT] stack count={len(base_stack)} "
-            f"targets={names} mode=legacy-overlay "
+            f"rows={rows} mode=legacy-overlay "
             f"X values={[v.label for v in x_axis[1]]} Y values={[v.label for v in y_axis[1]]}"
         )
         return (x_axis, y_axis)
