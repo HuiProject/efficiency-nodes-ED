@@ -109,7 +109,10 @@ function fitText(ctx, value, width) {
 class SweepLoraRowWidget {
     constructor(combo, toggle, node, index) {
         this.name = combo.name;
-        this.label = `LoRA ${index}`;
+        // The model name is the only text in this selector bar.  Keeping the
+        // original `scan_lora_name_N` label (or an extra "LoRA N" caption)
+        // causes it to overlap the selected filename after a pipe refresh.
+        this.label = "";
         this.value = combo.value ?? "None";
         this.options = combo.options || { values: ["None"] };
         this.node = node;
@@ -162,8 +165,10 @@ class SweepLoraRowWidget {
         ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR || "#999";
         ctx.textAlign = "left";
         ctx.textBaseline = "middle";
-        ctx.fillText(this.label, left + toggleWidth + 5, centerY);
-        const valueWidth = boxWidth - toggleWidth - 62;
+        if (this.label) ctx.fillText(this.label, left + toggleWidth + 5, centerY);
+        // With no caption, give the filename the same full value area as the
+        // Plot row while retaining the toggle-to-value gutter.
+        const valueWidth = boxWidth - toggleWidth - 22;
         ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
         ctx.textAlign = "right";
         ctx.fillText(fitText(ctx, this.value, valueWidth), left + boxWidth - 9, centerY);
@@ -200,6 +205,7 @@ function upgradeExistingRow(node, index) {
         if (at >= 0) node.widgets[at] = row;
         console.debug("[ED-UI] upgraded restored Sweep LoRA row", { node: node.id, index, lora: row.value });
     }
+    if (selector?.type === "ed_sweep_lora_row") selector.label = "";
     hideWidget(toggle);
 }
 
