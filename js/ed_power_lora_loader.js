@@ -5,6 +5,8 @@ import { app } from "../../scripts/app.js";
 // editor here makes the ED node usable when rgthree is disabled and gives
 // every row an explicit Model/Clip strength control.
 const NODE_NAME = "Power Lora Loader 💬ED (LORA_STACK)";
+const PROP_SHOW_STRENGTHS = "Show Strengths";
+const VALUE_SEPARATE_STRENGTHS = "Separate Model & Clip";
 const MAX_ROWS = 50;
 const H = () => LiteGraph.NODE_WIDGET_HEIGHT;
 let loraChoicesPromise = null;
@@ -81,6 +83,66 @@ function normalizeValue(value) {
         strength,
         strengthTwo: Number.isFinite(clip) ? clip : strength,
     };
+}
+
+// rgthree can override this ED alias when that plugin is enabled.  Its
+// default is intentionally "Single Strength", and older workflows persist
+// that value.  ED owns the contract for this alias, so migrate the active
+// instance at the graph boundary and materialize null CLIP values from the
+// corresponding model strength before the first draw.
+function forceSeparateStrengths(node, reason = "") {
+    if (!node) return false;
+    node.properties = node.properties || {};
+    let changed = false;
+    if (node.properties[PROP_SHOW_STRENGTHS] !== VALUE_SEPARATE_STRENGTHS) {
+        node.properties[PROP_SHOW_STRENGTHS] = VALUE_SEPARATE_STRENGTHS;
+        changed = true;
+    }
+    for (const widget of node.widgets || []) {
+        if (!String(widget?.name || "").startsWith("lora_")) continue;
+        const value = widget.value;
+        if (!value || typeof value !== "object") continue;
+        if (value.strengthTwo == null) {
+            const model = Number(value.strength);
+            value.strengthTwo = Number.isFinite(model) ? model : 1;
+            changed = true;
+        }
+    }
+    if (changed) {
+        node.setDirtyCanvas?.(true, true);
+        console.debug("[ED-UI] Power Loader migrated to Model/Clip strengths", {
+            node: node.id,
+            reason,
+            rows: (node.widgets || []).filter(widget => String(widget?.name || "").startsWith("lora_")).length,
+        });
+    }
+    return changed;
+}
+
+function patchExistingPowerLoader(node) {
+    if (!node || node.__edPowerExistingPatched) return;
+    node.__edPowerExistingPatched = true;
+
+    // LiteGraph calls configure(), not onConfigure(), when a workflow is
+    // loaded.  Wrapping both keeps the migration effective for 0.30.x and
+    // for older builds that expose the extension hook.
+    const previousConfigure = node.configure;
+    if (typeof previousConfigure === "function") {
+        node.configure = function(info) {
+            const result = previousConfigure.apply(this, arguments);
+            forceSeparateStrengths(this, "configure");
+            return result;
+        };
+    }
+    const previousOnConfigure = node.onConfigure;
+    if (typeof previousOnConfigure === "function") {
+        node.onConfigure = function(info) {
+            const result = previousOnConfigure.apply(this, arguments);
+            forceSeparateStrengths(this, "onConfigure");
+            return result;
+        };
+    }
+    forceSeparateStrengths(node, "nodeCreated");
 }
 
 async function getLoraChoices() {
@@ -278,8 +340,7 @@ function initialize(node) {
     // and leave ownership with that already-created widget set.
     if (typeof node.addNewLoraWidget === "function" ||
         (node.widgets || []).some(item => item?.constructor?.name === "PowerLoraLoaderWidget")) {
-        node.properties = node.properties || {};
-        node.properties["Show Strengths"] = "Separate Model & Clip";
+        patchExistingPowerLoader(node);
         node.__edPowerUsingExistingUI = true;
         console.debug("[ED-UI] Power Loader existing UI detected; enabled Model/Clip strengths", { node: node.id });
         return;
@@ -328,6 +389,9 @@ app.registerExtension({
         for (const node of app.graph?._nodes || []) {
             initialize(node);
             restoreSavedRows(node);
+            if (isPowerLoader(node) && node.__edPowerUsingExistingUI) {
+                forceSeparateStrengths(node, "afterConfigureGraph");
+            }
         }
     },
 });
