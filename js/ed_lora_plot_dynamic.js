@@ -234,12 +234,99 @@ function addNumber(node, name, label, value) {
     return item;
 }
 
+function clampRangeValue(widgetItem, value) {
+    const min = Number(widgetItem?.options?.min ?? -10);
+    const max = Number(widgetItem?.options?.max ?? 10);
+    return Math.max(min, Math.min(max, Number(value)));
+}
+
+function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
+    if (!first || !last) return;
+    if (first.__edPlotRangePair) {
+        first.__edPlotRangePair.end = last;
+        first.__edPlotRangePair.labelFirst = labelFirst;
+        first.__edPlotRangePair.labelLast = labelLast;
+        hideWidget(last);
+        return first;
+    }
+    const pair = { end: last, labelFirst, labelLast };
+    first.__edPlotRangePair = pair;
+    first.type = "ed_plot_range_pair";
+    first.label = "";
+    first.serialize = true;
+    first.serializeValue = function() { return Number(this.value ?? 0); };
+    first.computeSize = width => [width || 220, LiteGraph.NODE_WIDGET_HEIGHT];
+    first.draw = function(ctx, graphNode, width, y, height) {
+        const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
+        const margin = 15;
+        const frame = Number(graphNode?.size?.[0]) || Number(width) || 220;
+        const total = Math.max(80, frame - margin * 2);
+        const gap = 5;
+        const half = Math.max(38, (total - gap) / 2);
+        const values = [Number(this.value ?? 0), Number(pair.end?.value ?? 0)];
+        const labels = [pair.labelFirst, pair.labelLast];
+        ctx.save();
+        for (let side = 0; side < 2; side += 1) {
+            const x = margin + side * (half + gap);
+            ctx.beginPath();
+            ctx.roundRect(x, y, half, h, [h * 0.5]);
+            ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+            ctx.fill();
+            ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
+            ctx.stroke();
+            ctx.font = `${Math.max(9, h * 0.42)}px sans-serif`;
+            ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR || "#999";
+            ctx.textAlign = "left";
+            ctx.textBaseline = "middle";
+            ctx.fillText(fitText(ctx, labels[side], Math.max(18, half - 58)), x + 20, y + h * 0.5);
+            ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
+            ctx.textAlign = "right";
+            ctx.font = `${Math.max(10, h * 0.5)}px sans-serif`;
+            ctx.fillText(Number(values[side]).toFixed(2), x + half - 19, y + h * 0.5);
+            ctx.font = `${Math.max(10, h * 0.5)}px sans-serif`;
+            ctx.textAlign = "center";
+            ctx.fillText("−", x + 9, y + h * 0.5);
+            ctx.fillText("+", x + half - 8, y + h * 0.5);
+        }
+        ctx.restore();
+    };
+    first.mouse = function(event, pos, graphNode) {
+        if (event.type !== "pointerdown") return false;
+        const margin = 15;
+        const frame = Number(graphNode?.size?.[0]) || 220;
+        const total = Math.max(80, frame - margin * 2);
+        const gap = 5;
+        const half = Math.max(38, (total - gap) / 2);
+        const relative = Number(pos?.[0] ?? 0) - margin;
+        const side = relative > half + gap ? 1 : 0;
+        const localX = side ? relative - half - gap : relative;
+        const target = side ? pair.end : this;
+        if (!target) return true;
+        const current = Number(target.value ?? 0);
+        if (localX <= 18) {
+            target.value = clampRangeValue(target, Math.round((current - 0.05) * 100) / 100);
+        } else if (localX >= half - 18) {
+            target.value = clampRangeValue(target, Math.round((current + 0.05) * 100) / 100);
+        } else {
+            app.canvas?.prompt?.("Value", current, value => {
+                const parsed = Number(value);
+                if (Number.isFinite(parsed)) target.value = clampRangeValue(target, parsed);
+                graphNode.setDirtyCanvas(true, true);
+            }, event);
+        }
+        graphNode.setDirtyCanvas(true, true);
+        return true;
+    };
+    hideWidget(last);
+    return first;
+}
+
 function setRangeLabels(node, index) {
     const labels = {
-        [`scan_lora_x_first_strength_${index}`]: `L${index} X MStr 起`,
-        [`scan_lora_x_last_strength_${index}`]: `L${index} X MStr 止`,
-        [`scan_lora_y_first_strength_${index}`]: `L${index} Y CStr 起`,
-        [`scan_lora_y_last_strength_${index}`]: `L${index} Y CStr 止`,
+        [`scan_lora_x_first_strength_${index}`]: `L${index} X 起`,
+        [`scan_lora_x_last_strength_${index}`]: `L${index} X 止`,
+        [`scan_lora_y_first_strength_${index}`]: `L${index} Y 起`,
+        [`scan_lora_y_last_strength_${index}`]: `L${index} Y 止`,
     };
     for (const [name, label] of Object.entries(labels)) {
         const item = widget(node, name);
@@ -271,6 +358,20 @@ function upgradeExistingRow(node, index) {
     }
     hideWidget(toggle);
     setRangeLabels(node, index);
+    pairRangeWidgets(
+        node,
+        rowWidgets(node, index).xFirst,
+        rowWidgets(node, index).xLast,
+        `L${index} X 起`,
+        `L${index} X 止`,
+    );
+    pairRangeWidgets(
+        node,
+        rowWidgets(node, index).yFirst,
+        rowWidgets(node, index).yLast,
+        `L${index} Y 起`,
+        `L${index} Y 止`,
+    );
 }
 
 function addRow(node, index, saved = {}) {
@@ -287,10 +388,12 @@ function addRow(node, index, saved = {}) {
     const comboIndex = node.widgets.indexOf(combo);
     if (comboIndex >= 0) node.widgets[comboIndex] = row;
     hideWidget(toggle);
-    addNumber(node, `scan_lora_x_first_strength_${index}`, `L${index} MStr 起`, base.xFirst);
-    addNumber(node, `scan_lora_x_last_strength_${index}`, `L${index} MStr 止`, base.xLast);
-    addNumber(node, `scan_lora_y_first_strength_${index}`, `L${index} CStr 起`, base.yFirst);
-    addNumber(node, `scan_lora_y_last_strength_${index}`, `L${index} CStr 止`, base.yLast);
+    const xFirst = addNumber(node, `scan_lora_x_first_strength_${index}`, `L${index} X 起`, base.xFirst);
+    const xLast = addNumber(node, `scan_lora_x_last_strength_${index}`, `L${index} X 止`, base.xLast);
+    const yFirst = addNumber(node, `scan_lora_y_first_strength_${index}`, `L${index} Y 起`, base.yFirst);
+    const yLast = addNumber(node, `scan_lora_y_last_strength_${index}`, `L${index} Y 止`, base.yLast);
+    pairRangeWidgets(node, xFirst, xLast, `L${index} X 起`, `L${index} X 止`);
+    pairRangeWidgets(node, yFirst, yLast, `L${index} Y 起`, `L${index} Y 止`);
     console.debug("[ED-UI] LoRA Plot row created", { node: node.id, index, lora: row.value });
 }
 

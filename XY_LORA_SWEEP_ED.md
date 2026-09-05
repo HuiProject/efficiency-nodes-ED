@@ -35,6 +35,9 @@ scan_lora_clip_first_strength_N  # CLIP 起
 scan_lora_clip_last_strength_N   # CLIP 止
 ```
 
+The frontend renders the two ranges as paired horizontal bars to reduce node
+height: `L1 X 起/止` is the Model range and `L1 Y 起/止` is the CLIP range.
+
 Old four-value rows are still accepted. Their CLIP range is initialized from
 the Model range, so existing workflows keep their previous output until the
 new CLIP controls are edited. Plot-style `scan_lora_y_*` aliases are also
