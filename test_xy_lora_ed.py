@@ -85,6 +85,56 @@ class TestEDLoraSweep(unittest.TestCase):
             ("Anima\\target.safetensors", 0.8, 0.8),
         ])
 
+    def test_model_axis_changes_model_only(self):
+        plan = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 0.2, 0.8, 0.3, 0.7)],
+            axis_mode="model",
+        )
+        axes = plan.axis_values()
+        self.assertEqual([v.value["anima\\target.safetensors"] for v in axes], [0.2, 0.8])
+        self.assertEqual(plan.stack_for_value(axes[0].value)[1],
+                         ("Anima\\target.safetensors", 0.2, 1.0))
+        self.assertEqual(plan.stack_for_value(axes[1].value)[1],
+                         ("Anima\\target.safetensors", 0.8, 1.0))
+
+    def test_clip_axis_changes_clip_only(self):
+        plan = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 0.2, 0.8, 0.3, 0.7)],
+            axis_mode="clip",
+        )
+        axes = plan.axis_values()
+        self.assertEqual([v.value["anima\\target.safetensors"] for v in axes], [0.3, 0.7])
+        self.assertEqual(plan.stack_for_value(axes[0].value)[1],
+                         ("Anima\\target.safetensors", 1.0, 0.3))
+        self.assertEqual(plan.stack_for_value(axes[1].value)[1],
+                         ("Anima\\target.safetensors", 1.0, 0.7))
+
+    def test_model_and_clip_axes_combine_on_same_target(self):
+        x = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 0.2, 0.8, 0.3, 0.7)],
+            axis_mode="model",
+        )
+        y = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 0.2, 0.8, 0.3, 0.7)],
+            axis_mode="clip",
+        )
+        combined = combine_sweep_stacks(self.pipe, x, x.axis_values()[0].value,
+                                        y, y.axis_values()[1].value)
+        self.assertEqual(combined[1], ("Anima\\target.safetensors", 0.2, 0.7))
+
+    def test_missing_clip_range_falls_back_to_model_range(self):
+        plan = EDLoraSweepPlan(
+            self.pipe, "Anima\\target.safetensors", [0.0, 1.0],
+            target_specs=[("Anima\\target.safetensors", 0.25, 0.75)],
+            axis_mode="clip",
+        )
+        self.assertEqual([v.value["anima\\target.safetensors"] for v in plan.axis_values()],
+                         [0.25, 0.75])
+
     def test_normalize_rows_ignores_rows_outside_count(self):
         count, rows = normalize_sweep_rows(1, {
             "scan_lora_name_1": "Anima\\first.safetensors",
@@ -94,7 +144,7 @@ class TestEDLoraSweep(unittest.TestCase):
             "scan_lora_name_2": "Anima\\target.safetensors",
         })
         self.assertEqual(count, 1)
-        self.assertEqual(rows, [("Anima\\first.safetensors", 0.25, 0.75)])
+        self.assertEqual(rows, [("Anima\\first.safetensors", 0.25, 0.75, 0.25, 0.75)])
 
     def test_normalize_rows_skips_disabled_and_empty(self):
         count, rows = normalize_sweep_rows(3, {
@@ -105,7 +155,27 @@ class TestEDLoraSweep(unittest.TestCase):
             "scan_lora_3_toggle": True,
         })
         self.assertEqual(count, 3)
-        self.assertEqual(rows, [("Anima\\last.safetensors", 0.5, 1.0)])
+        self.assertEqual(rows, [("Anima\\last.safetensors", 0.5, 1.0, 0.5, 1.0)])
+
+    def test_normalize_rows_reads_independent_clip_range_and_alias(self):
+        _, rows = normalize_sweep_rows(2, {
+            "scan_lora_name_1": "Anima\\first.safetensors",
+            "scan_lora_1_toggle": True,
+            "scan_lora_first_strength_1": 0.2,
+            "scan_lora_last_strength_1": 0.8,
+            "scan_lora_clip_first_strength_1": 0.3,
+            "scan_lora_clip_last_strength_1": 0.7,
+            "scan_lora_name_2": "Anima\\target.safetensors",
+            "scan_lora_2_toggle": True,
+            "scan_lora_first_strength_2": 0.4,
+            "scan_lora_last_strength_2": 0.6,
+            "scan_lora_y_first_strength_2": 0.1,
+            "scan_lora_y_last_strength_2": 0.9,
+        })
+        self.assertEqual(rows, [
+            ("Anima\\first.safetensors", 0.2, 0.8, 0.3, 0.7),
+            ("Anima\\target.safetensors", 0.4, 0.6, 0.1, 0.9),
+        ])
 
 
 if __name__ == "__main__":

@@ -25,12 +25,27 @@ def stack_fingerprint(stack):
     return hashlib.sha256(encoded).hexdigest()[:12]
 
 
+def _row_float(row_values, keys, fallback):
+    """Read the first usable numeric value from a row, preserving old saves."""
+    for key in keys:
+        if key not in row_values or row_values[key] is None:
+            continue
+        try:
+            return float(row_values[key])
+        except (TypeError, ValueError):
+            continue
+    return float(fallback)
+
+
 def normalize_sweep_rows(lora_count, row_values, max_rows=50):
     """Read only the active Stacker-style rows from a node input mapping.
 
     ``row_values`` is deliberately a plain mapping so the UI contract can be
     tested without importing ComfyUI. Hidden or stale rows outside count are
-    ignored, and disabled/empty rows do not enter the sweep plan.
+    ignored, and disabled/empty rows do not enter the sweep plan.  The return
+    value is ``(name, model_first, model_last, clip_first, clip_last)``.
+    The last two fields are optional in saved workflows and fall back to the
+    model range, which preserves the pre-CLIP-axis behavior.
     """
     count = max(0, min(int(lora_count or 0), int(max_rows)))
     rows = []
@@ -39,9 +54,26 @@ def normalize_sweep_rows(lora_count, row_values, max_rows=50):
         enabled = row_values.get(f"scan_lora_{index}_toggle", True)
         if not enabled or name in (None, "", "None"):
             continue
-        first = row_values.get(f"scan_lora_first_strength_{index}", 0.5)
-        last = row_values.get(f"scan_lora_last_strength_{index}", 1.0)
-        rows.append((str(name), float(first), float(last)))
+        first = _row_float(row_values, [f"scan_lora_first_strength_{index}"], 0.5)
+        last = _row_float(row_values, [f"scan_lora_last_strength_{index}"], 1.0)
+        clip_first = _row_float(
+            row_values,
+            [
+                f"scan_lora_clip_first_strength_{index}",
+                # Accept Plot-style aliases from early experimental saves.
+                f"scan_lora_y_first_strength_{index}",
+            ],
+            first,
+        )
+        clip_last = _row_float(
+            row_values,
+            [
+                f"scan_lora_clip_last_strength_{index}",
+                f"scan_lora_y_last_strength_{index}",
+            ],
+            last,
+        )
+        rows.append((str(name), first, last, clip_first, clip_last))
     return count, rows
 
 
@@ -105,10 +137,20 @@ class EDLoraSweepPlan:
         self.target_names = [item[0] for item in targets]
         self.target_name = ", ".join(self.target_names)
         self.values = [float(value) for value in values]
-        self.target_ranges = {
-            normalize_name(name): (float(first), float(last))
-            for name, first, last in (target_specs or [])
-        }
+        self.model_ranges = {}
+        self.clip_ranges = {}
+        for spec in target_specs or []:
+            if len(spec) < 3:
+                continue
+            name, model_first, model_last = spec[:3]
+            clip_first = spec[3] if len(spec) >= 5 else model_first
+            clip_last = spec[4] if len(spec) >= 5 else model_last
+            key = normalize_name(name)
+            self.model_ranges[key] = (float(model_first), float(model_last))
+            self.clip_ranges[key] = (float(clip_first), float(clip_last))
+        # ``target_ranges`` remains an alias for callers written against the
+        # original three-value plan contract.
+        self.target_ranges = self.model_ranges
 
     def axis_values(self):
         """Return one XY value per batch index, with independent ranges per LoRA."""
@@ -117,11 +159,17 @@ class EDLoraSweepPlan:
             overrides = {}
             labels = []
             for target in self.targets:
-                first, last = self.target_ranges.get(normalize_name(target[0]), (self.values[0], self.values[-1]))
+                if self.axis_mode == "clip":
+                    ranges = self.clip_ranges
+                else:
+                    ranges = self.model_ranges
+                first, last = ranges.get(
+                    normalize_name(target[0]), (self.values[0], self.values[-1])
+                )
                 count = max(1, len(self.values))
                 value = first if count == 1 else first + (last - first) * index / (count - 1)
                 overrides[normalize_name(target[0])] = value
-                suffix = {"model": " M", "clip": " C", "both": ""}[self.axis_mode]
+                suffix = {"model": " MStr", "clip": " CStr", "both": ""}[self.axis_mode]
                 labels.append(f"{target[0]}{suffix}={value:.6g}")
             result.append(EDLoraAxisValue(self, overrides, ", ".join(labels)))
         return result

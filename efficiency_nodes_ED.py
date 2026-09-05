@@ -3397,31 +3397,64 @@ class EDLoraSweep:
             for key, value in kwargs.items():
                 if key.startswith("scan_lora_name_"):
                     suffix = key.rsplit("_", 1)[-1]
-                    dynamic_names[suffix] = [value, kwargs.get(f"scan_lora_{suffix}_toggle", True),
-                                             kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
-                                             kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)]
+                    dynamic_names[suffix] = [
+                        value,
+                        kwargs.get(f"scan_lora_{suffix}_toggle", True),
+                        kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
+                        kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0),
+                        kwargs.get(
+                            f"scan_lora_clip_first_strength_{suffix}",
+                            kwargs.get(f"scan_lora_y_first_strength_{suffix}",
+                                       kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5)),
+                        ),
+                        kwargs.get(
+                            f"scan_lora_clip_last_strength_{suffix}",
+                            kwargs.get(f"scan_lora_y_last_strength_{suffix}",
+                                       kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)),
+                        ),
+                    ]
                 if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
                     if value.get("on", True) and value.get("lora") not in (None, "None"):
-                        rows.append((value["lora"], float(value.get("first_strength", 0.5)), float(value.get("last_strength", 1.0))))
-            for name, toggle, first, last in dynamic_names.values():
+                        first = float(value.get("first_strength", 0.5))
+                        last = float(value.get("last_strength", 1.0))
+                        rows.append((
+                            value["lora"], first, last,
+                            float(value.get("clip_first_strength", first)),
+                            float(value.get("clip_last_strength", last)),
+                        ))
+            for name, toggle, first, last, clip_first, clip_last in dynamic_names.values():
                 if toggle and name not in (None, "None"):
-                    rows.append((name, float(first), float(last)))
+                    rows.append((name, float(first), float(last),
+                                 float(clip_first), float(clip_last)))
         # Backward-compatible fixed-field parsing for saved pre-dynamic nodes.
         if not rows:
             if target_lora:
-                rows = [(target_lora, float(first_strength), float(last_strength))]
+                rows = [(target_lora, float(first_strength), float(last_strength),
+                         float(first_strength), float(last_strength))]
         if not rows:
             raise ValueError("LoRA Sweep 至少需要 lora_count 个已启用的 LoRA 行")
         values = generate_sweep_values(batch_count, 0.0, 1.0)
-        plan = EDLoraSweepPlan(lora_pipe, [item[0] for item in rows], values, target_specs=rows)
+        axis_name = str(axis or "X").upper()
+        if axis_name not in {"X", "Y"}:
+            raise ValueError("LoRA Sweep 的 axis 只能是 X 或 Y")
+        axis_mode = "model" if axis_name == "X" else "clip"
+        plan = EDLoraSweepPlan(
+            lora_pipe,
+            [item[0] for item in rows],
+            values,
+            target_specs=rows,
+            axis_mode=axis_mode,
+        )
         result = dict(script or {})
         result["ed_lora_sweep_v2"] = plan
         resolved_values = [axis_value.label for axis_value in plan.axis_values()]
         print(
             f"[XY-ED-V2] plan targets={plan.target_names}, normalized_values={plan.values}, "
-            f"resolved_values={resolved_values}, base_stack={lora_pipe.fingerprint}"
+            f"axis_mode={axis_mode}, model_ranges={plan.model_ranges}, "
+            f"clip_ranges={plan.clip_ranges}, resolved_values={resolved_values}, "
+            f"base_stack={lora_pipe.fingerprint}"
         )
-        axis_type = "ED_LORA_SWEEP_X" if str(axis).upper() == "X" else "ED_LORA_SWEEP_Y"
+        axis_type = "ED_LORA_SWEEP_X" if axis_name == "X" else "ED_LORA_SWEEP_Y"
         axis = (axis_type, plan.axis_values())
         print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, normalized_values={values}, resolved_values={resolved_values}")
         return (result, plan, axis)

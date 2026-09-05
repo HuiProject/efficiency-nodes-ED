@@ -18,10 +18,27 @@ XY Plot.SCRIPT → KSampler ED.script
 Power Loader ED.CONTEXT → Efficient Loader ED.context_opt → KSampler ED.context
 ```
 
-Use one Sweep node for X and another for Y to make a 4×4 grid. Each node has
-its own selected rows/ranges; its `batch_count` is shared by all of its rows.
-Targets must be enabled in the actual `lora_pipe` (an enabled target may have
-strength `0`, allowing a zero-to-positive sweep).
+Use one Sweep node for X and another for Y to make a 4×4 grid. `axis=X` scans
+Model strength (`MStr`); `axis=Y` scans CLIP/text-encoder strength (`CStr`).
+Each node has its own selected rows/ranges and its `batch_count` is shared by
+all rows in that node. Targets must be enabled in the actual `lora_pipe` (an
+enabled target may have strength `0`, allowing a zero-to-positive sweep).
+
+Each selected row stores six values (the selector/toggle plus two ranges):
+
+```text
+scan_lora_name_N
+scan_lora_N_toggle
+scan_lora_first_strength_N       # Model 起
+scan_lora_last_strength_N        # Model 止
+scan_lora_clip_first_strength_N  # CLIP 起
+scan_lora_clip_last_strength_N   # CLIP 止
+```
+
+Old four-value rows are still accepted. Their CLIP range is initialized from
+the Model range, so existing workflows keep their previous output until the
+new CLIP controls are edited. Plot-style `scan_lora_y_*` aliases are also
+accepted when present in an early migration save.
 
 Each row's LoRA selector is a single node-owned bar combining the Power
 Loader-style enable toggle and dropdown. Existing saved combo/toggle rows are
@@ -40,6 +57,11 @@ Relevant runtime log entries:
 
 ```text
 [XY-ED-STACKER] count=... enabled_rows=...
-[XY-ED-V2] plan targets=... resolved_values=... base_stack=...
+[XY-ED-V2] plan targets=... axis_mode=model/clip model_ranges=... clip_ranges=...
 [XY-ED-V2] cell=(row,column) ... mode=immutable
 ```
+
+`CStr` only affects LoRAs that contain text-encoder/CLIP weights. Many Anima
+LoRAs contain UNet-only weights; for those files changing CLIP strength is
+correctly a no-op, while the same control works on a LoRA that includes CLIP
+weights.

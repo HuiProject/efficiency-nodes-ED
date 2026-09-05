@@ -22,6 +22,8 @@ function rowWidgets(node, index) {
         toggle: widget(node, `scan_lora_${index}_toggle`),
         first: widget(node, `scan_lora_first_strength_${index}`),
         last: widget(node, `scan_lora_last_strength_${index}`),
+        clipFirst: widget(node, `scan_lora_clip_first_strength_${index}`),
+        clipLast: widget(node, `scan_lora_clip_last_strength_${index}`),
     };
 }
 
@@ -207,6 +209,10 @@ function upgradeExistingRow(node, index) {
     }
     if (selector?.type === "ed_sweep_lora_row") selector.label = "";
     hideWidget(toggle);
+    const parts = rowWidgets(node, index);
+    if (parts.first) parts.first.label = `L${index} MStr 起`;
+    if (parts.last) parts.last.label = `L${index} MStr 止`;
+    addMissingClipWidgets(node, index);
 }
 
 function showWidget(item) {
@@ -246,18 +252,61 @@ function addRow(node, index, values = {}) {
         Number(values.first ?? 0.5), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
     const last = node.addWidget("number", `scan_lora_last_strength_${index}`,
         Number(values.last ?? 1.0), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
-    first.label = `L${index} Strength 起`;
-    last.label = `L${index} Strength 止`;
-    for (const item of [name, toggle, first, last]) {
+    first.label = `L${index} MStr 起`;
+    last.label = `L${index} MStr 止`;
+    const clipFirst = node.addWidget("number", `scan_lora_clip_first_strength_${index}`,
+        Number(values.clipFirst ?? values.first ?? 0.5), () => {},
+        { min: -10, max: 10, step: 0.01, serialize: true });
+    const clipLast = node.addWidget("number", `scan_lora_clip_last_strength_${index}`,
+        Number(values.clipLast ?? values.last ?? 1.0), () => {},
+        { min: -10, max: 10, step: 0.01, serialize: true });
+    clipFirst.label = `L${index} CStr 起`;
+    clipLast.label = `L${index} CStr 止`;
+    for (const item of [name, toggle, first, last, clipFirst, clipLast]) {
         if (item) item.serialize = true;
     }
     console.debug("[ED-UI] Sweep row created", { node: node.id, index, lora: name?.value });
 }
 
+function insertAfter(node, anchor, item) {
+    if (!anchor || !item || !Array.isArray(node.widgets)) return;
+    const current = node.widgets.indexOf(item);
+    if (current < 0) return;
+    node.widgets.splice(current, 1);
+    const anchorIndex = node.widgets.indexOf(anchor);
+    node.widgets.splice(anchorIndex < 0 ? node.widgets.length : anchorIndex + 1, 0, item);
+}
+
+function addMissingClipWidgets(node, index) {
+    const parts = rowWidgets(node, index);
+    if (!parts.last || (parts.clipFirst && parts.clipLast)) return;
+    // Migrate a pre-CLIP row in place. The new controls are node-owned and
+    // serialize with the same row, so the old workflow needs no rewiring.
+    const clipFirstValue = Number(parts.first?.value ?? 0.5);
+    const clipLastValue = Number(parts.last?.value ?? 1.0);
+    const clipFirst = parts.clipFirst || node.addWidget(
+        "number", `scan_lora_clip_first_strength_${index}`, clipFirstValue,
+        () => {}, { min: -10, max: 10, step: 0.01, serialize: true }
+    );
+    const clipLast = parts.clipLast || node.addWidget(
+        "number", `scan_lora_clip_last_strength_${index}`, clipLastValue,
+        () => {}, { min: -10, max: 10, step: 0.01, serialize: true }
+    );
+    clipFirst.label = `L${index} CStr 起`;
+    clipLast.label = `L${index} CStr 止`;
+    clipFirst.serialize = true;
+    clipLast.serialize = true;
+    insertAfter(node, parts.last, clipLast);
+    insertAfter(node, parts.last, clipFirst);
+    console.debug("[ED-UI] migrated Sweep CLIP controls", {
+        node: node.id, index, clipFirst: clipFirst.value, clipLast: clipLast.value,
+    });
+}
+
 function removeRow(node, index) {
     const parts = rowWidgets(node, index);
     // Remove in reverse order so widget indexes remain stable.
-    for (const item of [parts.last, parts.first, parts.toggle, parts.name]) {
+    for (const item of [parts.clipLast, parts.clipFirst, parts.last, parts.first, parts.toggle, parts.name]) {
         if (!item) continue;
         removeWidgetSafe(node, item);
     }
@@ -313,9 +362,11 @@ function restoreSavedRows(node) {
     if (countWidget) countWidget.value = count;
     ensureRows(node, count);
 
-    // Current format: base widgets occupy indexes 0..5, followed by rows.
+    // Current format: base widgets occupy indexes 0..5, followed by six
+    // values per row: name, toggle, model first/last, clip first/last.
     if (!legacyName && hasCompactCount && Array.isArray(saved) && saved.length > 6) {
         let offset = 6;
+        const rowWidth = saved.length >= 6 + count * 6 ? 6 : 4;
         for (let index = 1; index <= count; index++) {
             const parts = rowWidgets(node, index);
             if (!parts.name) continue;
@@ -323,13 +374,24 @@ function restoreSavedRows(node) {
             if (saved[offset + 1] !== undefined) parts.toggle.value = saved[offset + 1];
             if (saved[offset + 2] !== undefined) parts.first.value = saved[offset + 2];
             if (saved[offset + 3] !== undefined) parts.last.value = saved[offset + 3];
-            offset += 4;
+            if (rowWidth >= 6) {
+                if (saved[offset + 4] !== undefined) parts.clipFirst.value = saved[offset + 4];
+                if (saved[offset + 5] !== undefined) parts.clipLast.value = saved[offset + 5];
+            } else {
+                // Old rows had one pair of strengths.  Keep CLIP behavior
+                // identical until the user explicitly changes its fields.
+                if (parts.clipFirst) parts.clipFirst.value = parts.first?.value ?? 0.5;
+                if (parts.clipLast) parts.clipLast.value = parts.last?.value ?? 1.0;
+            }
+            offset += rowWidth;
         }
     } else if (count === 1 && legacyName && legacyName !== "None") {
         const parts = rowWidgets(node, 1);
         parts.name.value = legacyName;
         parts.first.value = legacyFirst;
         parts.last.value = legacyLast;
+        if (parts.clipFirst) parts.clipFirst.value = legacyFirst;
+        if (parts.clipLast) parts.clipLast.value = legacyLast;
     }
     refreshChoices(node);
     node.__edSweepRowsRestored = true;
