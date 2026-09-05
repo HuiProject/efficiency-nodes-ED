@@ -210,12 +210,12 @@ function upgradeExistingRow(node, index) {
     if (selector?.type === "ed_sweep_lora_row") selector.label = "";
     hideWidget(toggle);
     const parts = rowWidgets(node, index);
-    if (parts.first) parts.first.label = `L${index} X 起`;
-    if (parts.last) parts.last.label = `L${index} X 止`;
+    if (parts.first) parts.first.label = "X Model S";
+    if (parts.last) parts.last.label = "X Model E";
     addMissingClipWidgets(node, index);
     const updated = rowWidgets(node, index);
-    pairRangeWidgets(node, updated.first, updated.last, `L${index} X 起`, `L${index} X 止`);
-    pairRangeWidgets(node, updated.clipFirst, updated.clipLast, `L${index} Y 起`, `L${index} Y 止`);
+    pairRangeWidgets(node, updated.first, updated.last, "X Model S", "X Model E");
+    pairRangeWidgets(node, updated.clipFirst, updated.clipLast, "Y CLIP S", "Y CLIP E");
 }
 
 function showWidget(item) {
@@ -341,18 +341,18 @@ function addRow(node, index, values = {}) {
         Number(values.first ?? 0.5), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
     const last = node.addWidget("number", `scan_lora_last_strength_${index}`,
         Number(values.last ?? 1.0), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
-    first.label = `L${index} X 起`;
-    last.label = `L${index} X 止`;
+    first.label = "X Model S";
+    last.label = "X Model E";
     const clipFirst = node.addWidget("number", `scan_lora_clip_first_strength_${index}`,
         Number(values.clipFirst ?? values.first ?? 0.5), () => {},
         { min: -10, max: 10, step: 0.01, serialize: true });
     const clipLast = node.addWidget("number", `scan_lora_clip_last_strength_${index}`,
         Number(values.clipLast ?? values.last ?? 1.0), () => {},
         { min: -10, max: 10, step: 0.01, serialize: true });
-    clipFirst.label = `L${index} Y 起`;
-    clipLast.label = `L${index} Y 止`;
-    pairRangeWidgets(node, first, last, `L${index} X 起`, `L${index} X 止`);
-    pairRangeWidgets(node, clipFirst, clipLast, `L${index} Y 起`, `L${index} Y 止`);
+    clipFirst.label = "Y CLIP S";
+    clipLast.label = "Y CLIP E";
+    pairRangeWidgets(node, first, last, "X Model S", "X Model E");
+    pairRangeWidgets(node, clipFirst, clipLast, "Y CLIP S", "Y CLIP E");
     for (const item of [name, toggle, first, last, clipFirst, clipLast]) {
         if (item) item.serialize = true;
     }
@@ -383,8 +383,8 @@ function addMissingClipWidgets(node, index) {
         "number", `scan_lora_clip_last_strength_${index}`, clipLastValue,
         () => {}, { min: -10, max: 10, step: 0.01, serialize: true }
     );
-    clipFirst.label = `L${index} Y 起`;
-    clipLast.label = `L${index} Y 止`;
+    clipFirst.label = "Y CLIP S";
+    clipLast.label = "Y CLIP E";
     clipFirst.serialize = true;
     clipLast.serialize = true;
     insertAfter(node, parts.last, clipLast);

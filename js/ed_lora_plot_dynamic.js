@@ -323,10 +323,10 @@ function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
 
 function setRangeLabels(node, index) {
     const labels = {
-        [`scan_lora_x_first_strength_${index}`]: `L${index} X 起`,
-        [`scan_lora_x_last_strength_${index}`]: `L${index} X 止`,
-        [`scan_lora_y_first_strength_${index}`]: `L${index} Y 起`,
-        [`scan_lora_y_last_strength_${index}`]: `L${index} Y 止`,
+        [`scan_lora_x_first_strength_${index}`]: "X Model S",
+        [`scan_lora_x_last_strength_${index}`]: "X Model E",
+        [`scan_lora_y_first_strength_${index}`]: "Y CLIP S",
+        [`scan_lora_y_last_strength_${index}`]: "Y CLIP E",
     };
     for (const [name, label] of Object.entries(labels)) {
         const item = widget(node, name);
@@ -362,15 +362,15 @@ function upgradeExistingRow(node, index) {
         node,
         rowWidgets(node, index).xFirst,
         rowWidgets(node, index).xLast,
-        `L${index} X 起`,
-        `L${index} X 止`,
+        "X Model S",
+        "X Model E",
     );
     pairRangeWidgets(
         node,
         rowWidgets(node, index).yFirst,
         rowWidgets(node, index).yLast,
-        `L${index} Y 起`,
-        `L${index} Y 止`,
+        "Y CLIP S",
+        "Y CLIP E",
     );
 }
 
@@ -388,12 +388,12 @@ function addRow(node, index, saved = {}) {
     const comboIndex = node.widgets.indexOf(combo);
     if (comboIndex >= 0) node.widgets[comboIndex] = row;
     hideWidget(toggle);
-    const xFirst = addNumber(node, `scan_lora_x_first_strength_${index}`, `L${index} X 起`, base.xFirst);
-    const xLast = addNumber(node, `scan_lora_x_last_strength_${index}`, `L${index} X 止`, base.xLast);
-    const yFirst = addNumber(node, `scan_lora_y_first_strength_${index}`, `L${index} Y 起`, base.yFirst);
-    const yLast = addNumber(node, `scan_lora_y_last_strength_${index}`, `L${index} Y 止`, base.yLast);
-    pairRangeWidgets(node, xFirst, xLast, `L${index} X 起`, `L${index} X 止`);
-    pairRangeWidgets(node, yFirst, yLast, `L${index} Y 起`, `L${index} Y 止`);
+    const xFirst = addNumber(node, `scan_lora_x_first_strength_${index}`, "X Model S", base.xFirst);
+    const xLast = addNumber(node, `scan_lora_x_last_strength_${index}`, "X Model E", base.xLast);
+    const yFirst = addNumber(node, `scan_lora_y_first_strength_${index}`, "Y CLIP S", base.yFirst);
+    const yLast = addNumber(node, `scan_lora_y_last_strength_${index}`, "Y CLIP E", base.yLast);
+    pairRangeWidgets(node, xFirst, xLast, "X Model S", "X Model E");
+    pairRangeWidgets(node, yFirst, yLast, "Y CLIP S", "Y CLIP E");
     console.debug("[ED-UI] LoRA Plot row created", { node: node.id, index, lora: row.value });
 }
 

@@ -16,10 +16,11 @@ The four hidden `X_first_value`, `X_last_value`, `Y_first_value`, and
 New rows serialize their explicit ranges; changing a global fallback does not
 overwrite a row that already has explicit values.
 
-The visible range controls are compact paired bars: `L1 X 起` and `L1 X 止`
-share one row, as do `L1 Y 起` and `L1 Y 止`. X is Model strength and Y is
-CLIP strength. The serialized backend names still use `scan_lora_*` for
-compatibility, but that implementation name is not shown in the node UI.
+The visible range controls are compact paired bars: `X Model S` and `X Model E`
+share one row, as do `Y CLIP S` and `Y CLIP E` (`S` = Start, `E` = End). X is
+Model strength and Y is CLIP strength. The serialized backend names still use
+`scan_lora_*` for compatibility, but that implementation name is not shown in
+the node UI.
 
 The selector can include disabled Power Loader rows: they are not part of the
 first stack application, but are valid second-layer overlay targets. It cannot
