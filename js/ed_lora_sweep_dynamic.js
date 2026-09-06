@@ -218,8 +218,24 @@ function upgradeExistingRow(node, index) {
     if (parts.last) parts.last.label = "Model E";
     addMissingClipWidgets(node, index);
     const updated = rowWidgets(node, index);
-    pairRangeWidgets(node, updated.first, updated.last, "Model S", "Model E");
-    pairRangeWidgets(node, updated.clipFirst, updated.clipLast, "Clip S", "Clip E");
+    for (const item of [updated.first, updated.last, updated.clipFirst, updated.clipLast]) {
+        restoreNativeRangeWidget(item);
+    }
+}
+
+// Workflows opened after the paired-widget experiment may still hold the
+// custom marker in the live node object. Restore both values to ordinary
+// ComfyUI number widgets before laying out the row.
+function restoreNativeRangeWidget(item) {
+    if (!item) return;
+    if (item.__edSweepRangePair) {
+        item.type = item.__edSweepOriginalType || "number";
+        item.computeSize = item.__edSweepOriginalComputeSize;
+        delete item.__edSweepRangePair;
+    }
+    if (item.__edSweepHidden) showWidget(item);
+    item.hidden = false;
+    if (item.options) item.options.hidden = false;
 }
 
 function showWidget(item) {
@@ -244,19 +260,17 @@ function syncAxisVisibility(node) {
     for (let index = 1; index <= MAX_ROWS; index++) {
         const parts = rowWidgets(node, index);
         if (!parts.name) continue;
-        // The range pair is drawn by its first widget; its end widget must
-        // stay hidden even when the pair itself is visible.
-        const setPairVisibility = (first, last, visible) => {
+        const setRangeVisibility = (first, last, visible) => {
             if (visible) {
                 showWidget(first);
-                hideWidget(last);
+                showWidget(last);
             } else {
                 hideWidget(first);
                 hideWidget(last);
             }
         };
-        setPairVisibility(parts.first, parts.last, showModel);
-        setPairVisibility(parts.clipFirst, parts.clipLast, showClip);
+        setRangeVisibility(parts.first, parts.last, showModel);
+        setRangeVisibility(parts.clipFirst, parts.clipLast, showClip);
     }
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
@@ -402,8 +416,6 @@ function addRow(node, index, values = {}) {
         { min: -10, max: 10, step: 0.01, serialize: true });
     clipFirst.label = "Clip S";
     clipLast.label = "Clip E";
-    pairRangeWidgets(node, first, last, "Model S", "Model E");
-    pairRangeWidgets(node, clipFirst, clipLast, "Clip S", "Clip E");
     for (const item of [name, toggle, first, last, clipFirst, clipLast]) {
         if (item) item.serialize = true;
     }

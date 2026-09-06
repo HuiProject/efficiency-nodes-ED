@@ -243,101 +243,16 @@ function clampRangeValue(widgetItem, value) {
     return Math.max(min, Math.min(max, Number(value)));
 }
 
-function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
-    if (!first || !last) return;
-    if (first.__edPlotRangePair) {
-        first.__edPlotRangePair.end = last;
-        first.__edPlotRangePair.labelFirst = labelFirst;
-        first.__edPlotRangePair.labelLast = labelLast;
-        hideWidget(last);
-        return first;
+function restoreNativeRangeWidget(item) {
+    if (!item) return;
+    if (item.__edPlotRangePair) {
+        item.type = item.__edPlotOriginalType || "number";
+        item.computeSize = item.__edPlotOriginalComputeSize;
+        delete item.__edPlotRangePair;
     }
-    const pair = { end: last, labelFirst, labelLast };
-    first.__edPlotRangePair = pair;
-    first.type = "ed_plot_range_pair";
-    first.label = "";
-    first.serialize = true;
-    first.serializeValue = function() { return Number(this.value ?? 0); };
-    first.computeSize = width => [width || 220, LiteGraph.NODE_WIDGET_HEIGHT];
-    first.draw = function(ctx, graphNode, width, y, height) {
-        const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
-        const margin = 15;
-        const frame = Number(graphNode?.size?.[0]) || 220;
-        const total = Math.max(80, frame - margin * 2);
-        const gap = 5;
-        const half = Math.max(38, (total - gap) / 2);
-        const values = [Number(this.value ?? 0), Number(pair.end?.value ?? 0)];
-        const labels = [pair.labelFirst, pair.labelLast];
-        ctx.save();
-        for (let side = 0; side < 2; side += 1) {
-            const x = margin + side * (half + gap);
-            ctx.beginPath();
-            ctx.roundRect(x, y, half, h, [h * 0.5]);
-            ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
-            ctx.fill();
-            ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
-            ctx.stroke();
-            ctx.font = `${Math.max(9, h * 0.42)}px sans-serif`;
-            ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR || "#999";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.fillText(fitText(ctx, labels[side], Math.max(18, half - 58)), x + 20, y + h * 0.5);
-            ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
-            ctx.textAlign = "right";
-            ctx.font = `${Math.max(10, h * 0.5)}px sans-serif`;
-            ctx.fillText(Number(values[side]).toFixed(2), x + half - 19, y + h * 0.5);
-            ctx.font = `${Math.max(10, h * 0.5)}px sans-serif`;
-            ctx.textAlign = "center";
-            ctx.fillText("−", x + 9, y + h * 0.5);
-            ctx.fillText("+", x + half - 8, y + h * 0.5);
-        }
-        ctx.restore();
-    };
-    first.mouse = function(event, pos, graphNode) {
-        if (event.type !== "pointerdown") return false;
-        const margin = 15;
-        const frame = Number(graphNode?.size?.[0]) || 220;
-        const total = Math.max(80, frame - margin * 2);
-        const gap = 5;
-        const half = Math.max(38, (total - gap) / 2);
-        const rawX = Number(pos?.[0] ?? 0);
-        const canvasX = Number(event?.canvasX);
-        const nodeX = Number(graphNode?.pos?.[0]);
-        const hitX = Number.isFinite(rawX) && rawX >= 0 && rawX <= frame
-            ? rawX
-            : (Number.isFinite(canvasX) && Number.isFinite(nodeX) ? canvasX - nodeX : rawX);
-        const relative = hitX - margin;
-        const side = relative > half + gap ? 1 : 0;
-        const sideX = side ? relative - half - gap : relative;
-        const target = side ? pair.end : this;
-        if (!target) return true;
-        const current = Number(target.value ?? 0);
-        if (sideX <= 18) {
-            target.value = clampRangeValue(target, Math.round((current - 0.05) * 100) / 100);
-        } else if (sideX >= half - 18) {
-            target.value = clampRangeValue(target, Math.round((current + 0.05) * 100) / 100);
-        } else {
-            app.canvas?.prompt?.("Value", current, value => {
-                const parsed = Number(value);
-                if (Number.isFinite(parsed)) {
-                    target.value = clampRangeValue(target, parsed);
-                    target.callback?.(target.value);
-                    console.debug("[ED-UI] Plot range changed", {
-                        node: graphNode?.id, field: target.name, value: target.value,
-                    });
-                }
-                graphNode.setDirtyCanvas(true, true);
-            }, event);
-        }
-        target.callback?.(target.value);
-        console.debug("[ED-UI] Plot range changed", {
-            node: graphNode?.id, field: target.name, value: target.value,
-        });
-        graphNode.setDirtyCanvas(true, true);
-        return true;
-    };
-    hideWidget(last);
-    return first;
+    if (item.__edPlotHidden) showWidget(item);
+    item.hidden = false;
+    if (item.options) item.options.hidden = false;
 }
 
 function showWidget(item) {
@@ -360,17 +275,17 @@ function syncAxisVisibility(node) {
     for (let index = 1; index <= MAX_ROWS; index += 1) {
         const parts = rowWidgets(node, index);
         if (!parts.selector) continue;
-        const setPairVisibility = (first, last, visible) => {
+        const setRangeVisibility = (first, last, visible) => {
             if (visible) {
                 showWidget(first);
-                hideWidget(last);
+                showWidget(last);
             } else {
                 hideWidget(first);
                 hideWidget(last);
             }
         };
-        setPairVisibility(parts.xFirst, parts.xLast, mode === "model" || mode === "both");
-        setPairVisibility(parts.yFirst, parts.yLast, mode === "clip" || mode === "both");
+        setRangeVisibility(parts.xFirst, parts.xLast, mode === "model" || mode === "both");
+        setRangeVisibility(parts.yFirst, parts.yLast, mode === "clip" || mode === "both");
     }
     const width = node.size?.[0] || 220;
     node.setSize?.([width, node.computeSize?.()[1] || 140]);
@@ -414,20 +329,10 @@ function upgradeExistingRow(node, index) {
     }
     hideWidget(toggle);
     setRangeLabels(node, index);
-    pairRangeWidgets(
-        node,
-        rowWidgets(node, index).xFirst,
-        rowWidgets(node, index).xLast,
-        "Model S",
-        "Model E",
-    );
-    pairRangeWidgets(
-        node,
-        rowWidgets(node, index).yFirst,
-        rowWidgets(node, index).yLast,
-        "Clip S",
-        "Clip E",
-    );
+    const parts = rowWidgets(node, index);
+    for (const item of [parts.xFirst, parts.xLast, parts.yFirst, parts.yLast]) {
+        restoreNativeRangeWidget(item);
+    }
 }
 
 function addRow(node, index, saved = {}) {
@@ -448,8 +353,6 @@ function addRow(node, index, saved = {}) {
     const xLast = addNumber(node, `scan_lora_x_last_strength_${index}`, "Model E", base.xLast);
     const yFirst = addNumber(node, `scan_lora_y_first_strength_${index}`, "Clip S", base.yFirst);
     const yLast = addNumber(node, `scan_lora_y_last_strength_${index}`, "Clip E", base.yLast);
-    pairRangeWidgets(node, xFirst, xLast, "Model S", "Model E");
-    pairRangeWidgets(node, yFirst, yLast, "Clip S", "Clip E");
     console.debug("[ED-UI] LoRA Plot row created", { node: node.id, index, lora: row.value });
 }
 

@@ -18,9 +18,11 @@ second time and therefore differs from `XY Input: LoRA Sweep 💬ED`.
 There are no hidden global range or second batch widgets. Every active row
 serializes its explicit Model/Clip start and end values.
 
-The visible range controls are compact paired bars: `Model S/E` and `Clip S/E`
-(`S` = Start, `E` = End). The active range is shown according to `axis`; the
-inactive range is hidden to keep the node compact. The serialized backend names
+The visible range controls are four independent native number widgets: `Model S`,
+`Model E`, `Clip S`, and `Clip E` (`S` = Start, `E` = End). Keeping Start and
+End separate preserves reliable mouse focus and direct editing on ComfyUI
+0.30.2. The active range is shown according to `axis`; the inactive range is
+hidden to keep the node compact. The serialized backend names
 still use `scan_lora_*` for the active dynamic rows; that implementation name is
 not shown in the node UI.
 

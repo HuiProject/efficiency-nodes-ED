@@ -39,10 +39,11 @@ scan_lora_clip_first_strength_N  # CLIP 起
 scan_lora_clip_last_strength_N   # CLIP 止
 ```
 
-The frontend renders the two ranges as paired horizontal bars to reduce node
-height: `Model S/E` is the Model range and `Clip S/E` is the CLIP range
-(`S` = Start, `E` = End). The inactive range is hidden according to `axis`;
-both ranges are shown only for the `Model and Clip` modes.
+The frontend renders four independent native number widgets: `Model S`,
+`Model E`, `Clip S`, and `Clip E` (`S` = Start, `E` = End). Keeping Start and
+End separate preserves reliable mouse focus and direct editing on ComfyUI
+0.30.2. The inactive range is hidden according to `axis`; both ranges are
+shown only for the `Model and Clip` modes.
 
 Old four-value rows are still accepted. Their CLIP range is initialized from
 the Model range, so existing workflows keep their previous output until the
