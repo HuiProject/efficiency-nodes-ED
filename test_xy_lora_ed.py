@@ -2,7 +2,8 @@ import unittest
 
 from xy_lora_ed import (EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue,
                          combine_sweep_stacks, generate_sweep_values,
-                         stack_fingerprint, normalize_sweep_rows)
+                         stack_fingerprint, normalize_sweep_rows,
+                         normalize_sweep_axis)
 
 
 class TestEDLoraSweep(unittest.TestCase):
@@ -16,6 +17,20 @@ class TestEDLoraSweep(unittest.TestCase):
 
     def test_values_include_both_ends(self):
         self.assertEqual(generate_sweep_values(3, 0.5, 1.0), [0.5, 0.75, 1.0])
+
+    def test_six_descriptive_axes_map_to_direction_and_field(self):
+        self.assertEqual(normalize_sweep_axis("X Model"), ("X Model", "X", "model"))
+        self.assertEqual(normalize_sweep_axis("X Clip"), ("X Clip", "X", "clip"))
+        self.assertEqual(normalize_sweep_axis("Y Model"), ("Y Model", "Y", "model"))
+        self.assertEqual(normalize_sweep_axis("Y Clip"), ("Y Clip", "Y", "clip"))
+        self.assertEqual(normalize_sweep_axis("X Model and Clip"),
+                         ("X Model and Clip", "X", "both"))
+        self.assertEqual(normalize_sweep_axis("Y Model and Clip"),
+                         ("Y Model and Clip", "Y", "both"))
+
+    def test_old_axis_values_remain_compatible(self):
+        self.assertEqual(normalize_sweep_axis("X"), ("X Model", "X", "model"))
+        self.assertEqual(normalize_sweep_axis("Y"), ("Y Clip", "Y", "clip"))
 
     def test_target_replaced_once_without_reordering(self):
         plan = EDLoraSweepPlan(self.pipe, "anima/target.safetensors", [0.5])
@@ -155,7 +170,7 @@ class TestEDLoraSweep(unittest.TestCase):
             "scan_lora_3_toggle": True,
         })
         self.assertEqual(count, 3)
-        self.assertEqual(rows, [("Anima\\last.safetensors", 0.5, 1.0, 0.5, 1.0)])
+        self.assertEqual(rows, [("Anima\\last.safetensors", 1.0, 1.0, 1.0, 1.0)])
 
     def test_normalize_rows_reads_independent_clip_range_and_alias(self):
         _, rows = normalize_sweep_rows(2, {

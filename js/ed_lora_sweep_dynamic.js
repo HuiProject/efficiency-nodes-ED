@@ -210,12 +210,12 @@ function upgradeExistingRow(node, index) {
     if (selector?.type === "ed_sweep_lora_row") selector.label = "";
     hideWidget(toggle);
     const parts = rowWidgets(node, index);
-    if (parts.first) parts.first.label = "X Model S";
-    if (parts.last) parts.last.label = "X Model E";
+    if (parts.first) parts.first.label = "Model S";
+    if (parts.last) parts.last.label = "Model E";
     addMissingClipWidgets(node, index);
     const updated = rowWidgets(node, index);
-    pairRangeWidgets(node, updated.first, updated.last, "X Model S", "X Model E");
-    pairRangeWidgets(node, updated.clipFirst, updated.clipLast, "Y CLIP S", "Y CLIP E");
+    pairRangeWidgets(node, updated.first, updated.last, "Model S", "Model E");
+    pairRangeWidgets(node, updated.clipFirst, updated.clipLast, "Clip S", "Clip E");
 }
 
 function showWidget(item) {
@@ -225,6 +225,37 @@ function showWidget(item) {
     item.hidden = false;
     if (item.options) item.options.hidden = false;
     item.__edSweepHidden = false;
+}
+
+function syncAxisVisibility(node) {
+    const axis = String(widget(node, "axis")?.value || "X Model");
+    const showModel = axis === "X Model" || axis === "Y Model" ||
+        axis === "X Model and Clip" || axis === "Y Model and Clip" ||
+        // Old saved value: X was the model axis.
+        axis === "X";
+    const showClip = axis === "X Clip" || axis === "Y Clip" ||
+        axis === "X Model and Clip" || axis === "Y Model and Clip" ||
+        // Old saved values: Y was the clip axis.
+        axis === "Y";
+    for (let index = 1; index <= MAX_ROWS; index++) {
+        const parts = rowWidgets(node, index);
+        if (!parts.name) continue;
+        // The range pair is drawn by its first widget; its end widget must
+        // stay hidden even when the pair itself is visible.
+        const setPairVisibility = (first, last, visible) => {
+            if (visible) {
+                showWidget(first);
+                hideWidget(last);
+            } else {
+                hideWidget(first);
+                hideWidget(last);
+            }
+        };
+        setPairVisibility(parts.first, parts.last, showModel);
+        setPairVisibility(parts.clipFirst, parts.clipLast, showClip);
+    }
+    node.setSize([node.size[0], node.computeSize()[1]]);
+    node.setDirtyCanvas(true, true);
 }
 
 function refreshChoices(node) {
@@ -338,21 +369,21 @@ function addRow(node, index, values = {}) {
     if (nameIndex >= 0) node.widgets[nameIndex] = row;
     hideWidget(toggle);
     const first = node.addWidget("number", `scan_lora_first_strength_${index}`,
-        Number(values.first ?? 0.5), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
+        Number(values.first ?? 1.0), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
     const last = node.addWidget("number", `scan_lora_last_strength_${index}`,
         Number(values.last ?? 1.0), () => {}, { min: -10, max: 10, step: 0.01, serialize: true });
-    first.label = "X Model S";
-    last.label = "X Model E";
+    first.label = "Model S";
+    last.label = "Model E";
     const clipFirst = node.addWidget("number", `scan_lora_clip_first_strength_${index}`,
-        Number(values.clipFirst ?? values.first ?? 0.5), () => {},
+        Number(values.clipFirst ?? values.first ?? 1.0), () => {},
         { min: -10, max: 10, step: 0.01, serialize: true });
     const clipLast = node.addWidget("number", `scan_lora_clip_last_strength_${index}`,
         Number(values.clipLast ?? values.last ?? 1.0), () => {},
         { min: -10, max: 10, step: 0.01, serialize: true });
-    clipFirst.label = "Y CLIP S";
-    clipLast.label = "Y CLIP E";
-    pairRangeWidgets(node, first, last, "X Model S", "X Model E");
-    pairRangeWidgets(node, clipFirst, clipLast, "Y CLIP S", "Y CLIP E");
+    clipFirst.label = "Clip S";
+    clipLast.label = "Clip E";
+    pairRangeWidgets(node, first, last, "Model S", "Model E");
+    pairRangeWidgets(node, clipFirst, clipLast, "Clip S", "Clip E");
     for (const item of [name, toggle, first, last, clipFirst, clipLast]) {
         if (item) item.serialize = true;
     }
@@ -373,7 +404,7 @@ function addMissingClipWidgets(node, index) {
     if (!parts.last || (parts.clipFirst && parts.clipLast)) return;
     // Migrate a pre-CLIP row in place. The new controls are node-owned and
     // serialize with the same row, so the old workflow needs no rewiring.
-    const clipFirstValue = Number(parts.first?.value ?? 0.5);
+    const clipFirstValue = Number(parts.first?.value ?? 1.0);
     const clipLastValue = Number(parts.last?.value ?? 1.0);
     const clipFirst = parts.clipFirst || node.addWidget(
         "number", `scan_lora_clip_first_strength_${index}`, clipFirstValue,
@@ -383,8 +414,8 @@ function addMissingClipWidgets(node, index) {
         "number", `scan_lora_clip_last_strength_${index}`, clipLastValue,
         () => {}, { min: -10, max: 10, step: 0.01, serialize: true }
     );
-    clipFirst.label = "Y CLIP S";
-    clipLast.label = "Y CLIP E";
+    clipFirst.label = "Clip S";
+    clipLast.label = "Clip E";
     clipFirst.serialize = true;
     clipLast.serialize = true;
     insertAfter(node, parts.last, clipLast);
@@ -425,7 +456,7 @@ function restoreSavedRows(node) {
     let countWidget = widget(node, "lora_count");
     let count = Number(countWidget?.value);
     let legacyName = null;
-    let legacyFirst = 0.5;
+    let legacyFirst = 1.0;
     let legacyLast = 1.0;
     // Both versions retain legacy fields. New compact nodes have a numeric
     // lora_count at index 5; older nodes have no such value and start with a
@@ -471,7 +502,7 @@ function restoreSavedRows(node) {
             } else {
                 // Old rows had one pair of strengths.  Keep CLIP behavior
                 // identical until the user explicitly changes its fields.
-                if (parts.clipFirst) parts.clipFirst.value = parts.first?.value ?? 0.5;
+                if (parts.clipFirst) parts.clipFirst.value = parts.first?.value ?? 1.0;
                 if (parts.clipLast) parts.clipLast.value = parts.last?.value ?? 1.0;
             }
             offset += rowWidth;
@@ -513,6 +544,15 @@ function initialize(node) {
             console.debug("[ED-UI] Sweep count changed", { node: node.id, count: current });
         };
     }
+    const axisWidget = widget(node, "axis");
+    if (axisWidget) {
+        const originalAxisCallback = axisWidget.callback;
+        axisWidget.callback = function (value) {
+            originalAxisCallback?.apply(this, arguments);
+            syncAxisVisibility(node);
+            console.debug("[ED-UI] Sweep axis changed", { node: node.id, axis: this.value ?? value });
+        };
+    }
 
     // ComfyUI 0.30.x notifies Vue/LiteGraph widget edits through the node-level
     // hook. The legacy widget callback is still wrapped above for older builds,
@@ -536,6 +576,8 @@ function initialize(node) {
         } else if (typeof widgetName === "string" && widgetName.startsWith("scan_lora_name_")) {
             refreshChoices(this);
             this.setDirtyCanvas(true, true);
+        } else if (widgetName === "axis") {
+            syncAxisVisibility(this);
         }
         return result;
     };
@@ -563,6 +605,7 @@ function initialize(node) {
         return originalDrawForeground?.apply(this, arguments);
     };
     ensureRows(node, countWidget?.value ?? 1);
+    syncAxisVisibility(node);
 
     const originalConnections = node.onConnectionsChange;
     node.onConnectionsChange = function () {

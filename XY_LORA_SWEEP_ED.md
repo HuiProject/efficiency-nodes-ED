@@ -18,8 +18,12 @@ XY Plot.SCRIPT → KSampler ED.script
 Power Loader ED.CONTEXT → Efficient Loader ED.context_opt → KSampler ED.context
 ```
 
-Use one Sweep node for X and another for Y to make a 4×4 grid. `axis=X` scans
-Model strength (`MStr`); `axis=Y` scans CLIP/text-encoder strength (`CStr`).
+Use one Sweep node for X and another for Y to make a 4×4 grid. The `axis`
+selector is explicit: `X Model`, `X Clip`, `Y Model`, `Y Clip`, `X Model and
+Clip`, or `Y Model and Clip`. The first word chooses the grid direction and
+the remaining words choose whether Model, CLIP, or both strengths are swept.
+The legacy values `X` and `Y` remain accepted as aliases for `X Model` and
+`Y Clip`.
 Each node has its own selected rows/ranges and its `batch_count` is shared by
 all rows in that node. Targets must be enabled in the actual `lora_pipe` (an
 enabled target may have strength `0`, allowing a zero-to-positive sweep).
@@ -36,8 +40,9 @@ scan_lora_clip_last_strength_N   # CLIP 止
 ```
 
 The frontend renders the two ranges as paired horizontal bars to reduce node
-height: `X Model S/E` is the Model range and `Y CLIP S/E` is the CLIP range
-(`S` = Start, `E` = End).
+height: `Model S/E` is the Model range and `Clip S/E` is the CLIP range
+(`S` = Start, `E` = End). The inactive range is hidden according to `axis`;
+both ranges are shown only for the `Model and Clip` modes.
 
 Old four-value rows are still accepted. Their CLIP range is initialized from
 the Model range, so existing workflows keep their previous output until the

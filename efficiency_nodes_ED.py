@@ -30,9 +30,17 @@ import comfy.sd
 import comfy.utils
 
 try:
-    from .xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
+    from .xy_lora_ed import (
+        EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
+        generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
+        normalize_sweep_axis,
+    )
 except ImportError:
-    from xy_lora_ed import EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks, generate_sweep_values, stack_fingerprint, normalize_sweep_rows
+    from xy_lora_ed import (
+        EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
+        generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
+        normalize_sweep_axis,
+    )
 try:
     from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, get_axis_plan, merge_partial_stack
 except ImportError:
@@ -3357,15 +3365,19 @@ class EDLoraSweep:
     MAX_SCAN_LORAS = 50
     @classmethod
     def INPUT_TYPES(cls):
+        axis_values = [
+            "X Model", "X Clip", "Y Model", "Y Clip",
+            "X Model and Clip", "Y Model and Clip",
+        ]
         inputs = {
             "required": {
                 "lora_pipe": ("ED_LORA_PIPE",),
                 "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
-                "axis": (["X", "Y"], {"default": "X"}),
+                "axis": (axis_values, {"default": "X Model"}),
                 # Legacy single-target fields stay in the contract for saved
                 # workflows; the dynamic frontend hides them on screen.
                 "target_lora": (["None"] + folder_paths.get_filename_list("loras"),),
-                "first_strength": ("FLOAT", {"default": 0.5, "min": -10.0, "max": 10.0, "step": 0.01}),
+                "first_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "lora_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_SCAN_LORAS, "step": 1}),
             },
@@ -3381,8 +3393,8 @@ class EDLoraSweep:
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
-    def build_plan(self, lora_pipe, batch_count, axis="X", lora_count=0,
-                   target_lora=None, first_strength=0.5, last_strength=1.0,
+    def build_plan(self, lora_pipe, batch_count, axis="X Model", lora_count=0,
+                   target_lora=None, first_strength=1.0, last_strength=1.0,
                    script=None, **kwargs):
         rows = []
         # Stacker-style dynamic rows are the canonical contract. Only the
@@ -3400,12 +3412,12 @@ class EDLoraSweep:
                     dynamic_names[suffix] = [
                         value,
                         kwargs.get(f"scan_lora_{suffix}_toggle", True),
-                        kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5),
+                        kwargs.get(f"scan_lora_first_strength_{suffix}", 1.0),
                         kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0),
                         kwargs.get(
                             f"scan_lora_clip_first_strength_{suffix}",
                             kwargs.get(f"scan_lora_y_first_strength_{suffix}",
-                                       kwargs.get(f"scan_lora_first_strength_{suffix}", 0.5)),
+                                       kwargs.get(f"scan_lora_first_strength_{suffix}", 1.0)),
                         ),
                         kwargs.get(
                             f"scan_lora_clip_last_strength_{suffix}",
@@ -3415,7 +3427,7 @@ class EDLoraSweep:
                     ]
                 if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
                     if value.get("on", True) and value.get("lora") not in (None, "None"):
-                        first = float(value.get("first_strength", 0.5))
+                        first = float(value.get("first_strength", 1.0))
                         last = float(value.get("last_strength", 1.0))
                         rows.append((
                             value["lora"], first, last,
@@ -3434,10 +3446,7 @@ class EDLoraSweep:
         if not rows:
             raise ValueError("LoRA Sweep 至少需要 lora_count 个已启用的 LoRA 行")
         values = generate_sweep_values(batch_count, 0.0, 1.0)
-        axis_name = str(axis or "X").upper()
-        if axis_name not in {"X", "Y"}:
-            raise ValueError("LoRA Sweep 的 axis 只能是 X 或 Y")
-        axis_mode = "model" if axis_name == "X" else "clip"
+        axis_name, axis_direction, axis_mode = normalize_sweep_axis(axis)
         plan = EDLoraSweepPlan(
             lora_pipe,
             [item[0] for item in rows],
@@ -3454,7 +3463,7 @@ class EDLoraSweep:
             f"clip_ranges={plan.clip_ranges}, resolved_values={resolved_values}, "
             f"base_stack={lora_pipe.fingerprint}"
         )
-        axis_type = "ED_LORA_SWEEP_X" if axis_name == "X" else "ED_LORA_SWEEP_Y"
+        axis_type = "ED_LORA_SWEEP_X" if axis_direction == "X" else "ED_LORA_SWEEP_Y"
         axis = (axis_type, plan.axis_values())
         print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, normalized_values={values}, resolved_values={resolved_values}")
         return (result, plan, axis)

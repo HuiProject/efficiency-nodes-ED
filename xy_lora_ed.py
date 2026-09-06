@@ -15,6 +15,29 @@ def normalize_name(name):
     return str(name).replace("/", "\\").casefold()
 
 
+def normalize_sweep_axis(axis):
+    """Return ``(canonical_name, direction, field_mode)`` for Sweep axes.
+
+    ``X``/``Y`` are accepted as compatibility aliases for pre-six-option
+    workflows (model-on-X and clip-on-Y respectively).
+    """
+    raw = str(axis or "X Model").strip()
+    canonical = {"X": "X Model", "Y": "Y Clip"}.get(raw.upper(), raw)
+    specs = {
+        "X Model": ("X", "model"),
+        "X Clip": ("X", "clip"),
+        "Y Model": ("Y", "model"),
+        "Y Clip": ("Y", "clip"),
+        "X Model and Clip": ("X", "both"),
+        "Y Model and Clip": ("Y", "both"),
+    }
+    try:
+        direction, mode = specs[canonical]
+    except KeyError as exc:
+        raise ValueError("LoRA Sweep 的 axis 必须是六种 Model/Clip 模式之一") from exc
+    return canonical, direction, mode
+
+
 # <2> 生成稳定栈签名，运行日志可据此判断是否发生乱序或重复应用。
 def stack_fingerprint(stack):
     payload = [
@@ -54,7 +77,7 @@ def normalize_sweep_rows(lora_count, row_values, max_rows=50):
         enabled = row_values.get(f"scan_lora_{index}_toggle", True)
         if not enabled or name in (None, "", "None"):
             continue
-        first = _row_float(row_values, [f"scan_lora_first_strength_{index}"], 0.5)
+        first = _row_float(row_values, [f"scan_lora_first_strength_{index}"], 1.0)
         last = _row_float(row_values, [f"scan_lora_last_strength_{index}"], 1.0)
         clip_first = _row_float(
             row_values,
