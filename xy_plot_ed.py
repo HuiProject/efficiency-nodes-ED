@@ -103,11 +103,15 @@ def compose_xyplot_script(grid_spacing, xy_flip, y_label_orientation,
         x_type, y_type = y_type, x_type
         x_values, y_values = y_values, x_values
 
+    output_mode = str(ksampler_output_image or "Images")
+    # Preserve the historical boolean payload for Images/Plot so old saved
+    # workflows keep working; Plot+Image is a new explicit string mode.
+    output_flag = "Plot+Image" if output_mode == "Plot+Image" else output_mode == "Plot"
     return {
         "xyplot": (
             x_type, x_values, y_type, y_values, int(grid_spacing),
             str(y_label_orientation), str(cache_models) == "True",
-            str(ksampler_output_image) == "Plot", my_unique_id, dependencies,
+            output_flag, my_unique_id, dependencies,
         )
     }
 
@@ -125,7 +129,7 @@ class EDXYPlot:
                 "XY_flip": (["False", "True"],),
                 "Y_label_orientation": (["Horizontal", "Vertical"], {"default": "Vertical"}),
                 "cache_models": (["True", "False"],),
-                "ksampler_output_image": (["Images", "Plot"],),
+                "ksampler_output_image": (["Images", "Plot", "Plot+Image"],),
             },
             "optional": {
                 "dependencies": ("DEPENDENCIES",),

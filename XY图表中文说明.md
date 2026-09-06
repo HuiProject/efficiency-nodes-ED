@@ -3,6 +3,14 @@
 两种节点都从 `Power Lora Loader 💬ED (LORA_STACK)` 读取 LoRA 选择列表，
 并通过 `XY Plot → KSampler (Efficient) 💬ED` 生成图表；它们的**加载蓝图不同**。
 
+节点显示名称现在区分为：
+
+- `XY Input: LoRA Sweep (ED)`：从同一份基础 LoRA 栈重建每个网格单元，适合正常强度对比。
+- `XY Input: LoRA Plot (Legacy Overlay)`：在 Power Loader 已应用结果上再次叠加目标 LoRA，保留旧版后加载效果。
+
+图表中的 LoRA 标签会在文件名之前标出来源，例如 `Sweep: shiny-skin MStr=0.5` 或
+`Plot: shiny-skin MStr=0.5`；目录和模型扩展名会省略。
+
 | 节点 | 核心用途 | 每个格子的模型来源 | 与普通 Power Loader 的关系 |
 |---|---|---|---|
 | `XY Input: LoRA Sweep 💬ED` | 正常、可比较的强度扫描 | 从未加载 LoRA 的基础模型重新构建完整堆栈 | 同一堆栈与强度时，应与普通 Power Loader 一致 |
@@ -36,13 +44,14 @@
 ### 每个 LoRA 独立范围
 
 - `batch_count` 是当前 Plot 轴的唯一批次数；`axis` 决定输出接到 XY Plot 的 X 或 Y。
-- 每个已添加的 LoRA 行各自拥有 `X 起`、`X 止`、`Y 起`、`Y 止` 四个强度值。
+- 每个已添加的 LoRA 行各自拥有 `Model S`、`Model E`、`Clip S`、`Clip E` 四个强度值（S=Start，E=End）。
+- 每个起止值旁边都有对应的 `FLOAT` 输入插槽；连接外部数值时，以连接值覆盖节点内的滑块值，未连接时使用节点内数值。
 - 图表在同一归一化位置（0→1）分别插值每一行的范围，因此 `lora_count=2`
   时两个 LoRA 可以使用不同的 X/Y 起止值，但仍生成同一个矩形网格。
 - 行的名称与启用开关在界面上合并为一个节点内控件；候选列表只来自已连接的
   `Power Lora Loader ED`，连接变化后会自动刷新并保留仍有效的选择。
 - 每个 Plot 节点只输出一个 `XY_AXIS`；Model/Clip 起止值按每个 LoRA 行独立保存。
-  界面使用 `Model S/E`、`Clip S/E`，由 `axis` 隐藏不参与当前扫描的范围。
+  界面使用 `Model S/E`、`Clip S/E`，由 `axis` 隐藏不参与当前扫描的范围；减少 `lora_count` 时会同步移除未连接的多余插槽。
 
 目标 LoRA 在 Power Loader 中的状态：
 
@@ -53,6 +62,17 @@
 | 开启，强度 0 | 不实际加载 | 按图表强度加载 | 图表同时控制 MStr/CStr 时，通常接近“关闭” |
 
 即使目标 LoRA 关闭，Plot 也仍会叠加在**其他已开启 LoRA**的结果上，不是脱离整个堆栈的独立模型。
+
+## 3. XY Plot 参数
+
+- `grid_spacing`：网格单元之间的像素间距。0 表示紧贴排列，数值越大留白越宽。
+- `XY_flip`：交换 X、Y 两个方向及其标签；用于改变横纵轴布局，不改变每格的采样值。
+- `Y_label_orientation`：Y 轴标签方向。`Vertical` 会顺时针旋转 90°，适合较长的 LoRA 名称；`Horizontal` 保持横向文字。
+- `cache_models`：是否允许 XY 采样流程缓存已加载模型。`True` 可减少重复加载、提高速度，但会占用更多内存；显存紧张时用 `False`。
+- `ksampler_output_image`：采样器输出模式：
+  - `Images`：输出各网格单元组成的图像批次。
+  - `Plot`：输出带 X/Y 标签的合成图表。
+  - `Plot+Image`：界面同时保存合成图表和单元图像；节点下游的 IMAGE 输出为单元图像批次。
 
 ## 基本连线
 

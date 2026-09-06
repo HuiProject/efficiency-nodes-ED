@@ -32,6 +32,24 @@ function rowWidgets(node, index) {
     };
 }
 
+function ensureRangeInputs(node, index) {
+    const fields = [
+        [`scan_lora_x_first_strength_${index}`, "Model S"],
+        [`scan_lora_x_last_strength_${index}`, "Model E"],
+        [`scan_lora_y_first_strength_${index}`, "Clip S"],
+        [`scan_lora_y_last_strength_${index}`, "Clip E"],
+    ];
+    for (const [name, label] of fields) {
+        if (node.inputs?.some(input => input.name === name)) continue;
+        const input = node.addInput?.(name, "FLOAT", {
+            widget: { name },
+            tooltip: `Connect a FLOAT to override ${label} for LoRA row ${index}.`,
+        });
+        if (input) input.label = label;
+        console.debug("[ED-UI] Plot range input added", { node: node.id, name });
+    }
+}
+
 function connectedStackNames(node) {
     const input = (node.inputs || []).find(item => item.name === "lora_pipe" || item.name === "lora_stack");
     const link = input?.link != null ? app.graph?.links?.[input.link] : null;
@@ -353,6 +371,7 @@ function addRow(node, index, saved = {}) {
     const xLast = addNumber(node, `scan_lora_x_last_strength_${index}`, "Model E", base.xLast);
     const yFirst = addNumber(node, `scan_lora_y_first_strength_${index}`, "Clip S", base.yFirst);
     const yLast = addNumber(node, `scan_lora_y_last_strength_${index}`, "Clip E", base.yLast);
+    ensureRangeInputs(node, index);
     console.debug("[ED-UI] LoRA Plot row created", { node: node.id, index, lora: row.value });
 }
 
@@ -360,6 +379,14 @@ function removeRow(node, index) {
     const row = rowWidgets(node, index);
     for (const item of [row.yLast, row.yFirst, row.xLast, row.xFirst, row.toggle, row.selector]) {
         removeWidgetSafe(node, item);
+    }
+    const inputNames = [
+        `scan_lora_x_first_strength_${index}`, `scan_lora_x_last_strength_${index}`,
+        `scan_lora_y_first_strength_${index}`, `scan_lora_y_last_strength_${index}`,
+    ];
+    for (const name of inputNames.reverse()) {
+        const slot = node.inputs?.findIndex(input => input.name === name) ?? -1;
+        if (slot >= 0 && node.inputs[slot]?.link == null) node.removeInput?.(slot);
     }
 }
 
@@ -373,6 +400,7 @@ function ensureRows(node, requested) {
     for (let index = current + 1; index <= count; index += 1) addRow(node, index);
     for (let index = current; index > count; index -= 1) removeRow(node, index);
     for (let index = 1; index <= count; index += 1) upgradeExistingRow(node, index);
+    for (let index = 1; index <= count; index += 1) ensureRangeInputs(node, index);
     const width = node.size?.[0] || 220;
     const computed = typeof node.computeSize === "function" ? node.computeSize() : [width, 140];
     node.setSize?.([width, Math.max(140, computed[1] || 0)]);

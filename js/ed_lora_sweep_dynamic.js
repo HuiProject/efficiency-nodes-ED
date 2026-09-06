@@ -31,6 +31,24 @@ function rowWidgets(node, index) {
     };
 }
 
+function ensureRangeInputs(node, index) {
+    const fields = [
+        [`scan_lora_first_strength_${index}`, "Model S"],
+        [`scan_lora_last_strength_${index}`, "Model E"],
+        [`scan_lora_clip_first_strength_${index}`, "Clip S"],
+        [`scan_lora_clip_last_strength_${index}`, "Clip E"],
+    ];
+    for (const [name, label] of fields) {
+        if (node.inputs?.some(input => input.name === name)) continue;
+        const input = node.addInput?.(name, "FLOAT", {
+            widget: { name },
+            tooltip: `Connect a FLOAT to override ${label} for LoRA row ${index}.`,
+        });
+        if (input) input.label = label;
+        console.debug("[ED-UI] Sweep range input added", { node: node.id, name });
+    }
+}
+
 function connectedStackNames(node) {
     const input = (node.inputs || []).find(item => item.name === "lora_pipe");
     const link = input?.link != null ? app.graph?.links?.[input.link] : null;
@@ -295,102 +313,6 @@ function clampRangeValue(widgetItem, value) {
     return Math.max(min, Math.min(max, Number(value)));
 }
 
-function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
-    if (!first || !last) return;
-    if (first.__edSweepRangePair) {
-        first.__edSweepRangePair.end = last;
-        first.__edSweepRangePair.labelFirst = labelFirst;
-        first.__edSweepRangePair.labelLast = labelLast;
-        hideWidget(last);
-        return first;
-    }
-    const pair = { end: last, labelFirst, labelLast };
-    first.__edSweepRangePair = pair;
-    first.type = "ed_sweep_range_pair";
-    first.label = "";
-    first.serialize = true;
-    first.serializeValue = function() { return Number(this.value ?? 0); };
-    first.computeSize = width => [width || 220, LiteGraph.NODE_WIDGET_HEIGHT];
-    first.draw = function(ctx, graphNode, width, y, height) {
-        const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
-        const margin = 15;
-        const frame = Number(graphNode?.size?.[0]) || 220;
-        const total = Math.max(80, frame - margin * 2);
-        const gap = 5;
-        const half = Math.max(38, (total - gap) / 2);
-        const values = [Number(this.value ?? 0), Number(pair.end?.value ?? 0)];
-        const labels = [pair.labelFirst, pair.labelLast];
-        ctx.save();
-        for (let side = 0; side < 2; side += 1) {
-            const x = margin + side * (half + gap);
-            ctx.beginPath();
-            ctx.roundRect(x, y, half, h, [h * 0.5]);
-            ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
-            ctx.fill();
-            ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
-            ctx.stroke();
-            ctx.font = `${Math.max(9, h * 0.42)}px sans-serif`;
-            ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR || "#999";
-            ctx.textAlign = "left";
-            ctx.textBaseline = "middle";
-            ctx.fillText(fitText(ctx, labels[side], Math.max(18, half - 58)), x + 20, y + h * 0.5);
-            ctx.fillStyle = LiteGraph.WIDGET_TEXT_COLOR;
-            ctx.textAlign = "right";
-            ctx.font = `${Math.max(10, h * 0.5)}px sans-serif`;
-            ctx.fillText(Number(values[side]).toFixed(2), x + half - 19, y + h * 0.5);
-            ctx.textAlign = "center";
-            ctx.fillText("−", x + 9, y + h * 0.5);
-            ctx.fillText("+", x + half - 8, y + h * 0.5);
-        }
-        ctx.restore();
-    };
-    first.mouse = function(event, pos, graphNode) {
-        if (event.type !== "pointerdown") return false;
-        const margin = 15;
-        const frame = Number(graphNode?.size?.[0]) || 220;
-        const total = Math.max(80, frame - margin * 2);
-        const gap = 5;
-        const half = Math.max(38, (total - gap) / 2);
-        const rawX = Number(pos?.[0] ?? 0);
-        const canvasX = Number(event?.canvasX);
-        const nodeX = Number(graphNode?.pos?.[0]);
-        const hitX = Number.isFinite(rawX) && rawX >= 0 && rawX <= frame
-            ? rawX
-            : (Number.isFinite(canvasX) && Number.isFinite(nodeX) ? canvasX - nodeX : rawX);
-        const relative = hitX - margin;
-        const side = relative > half + gap ? 1 : 0;
-        const sideX = side ? relative - half - gap : relative;
-        const target = side ? pair.end : this;
-        if (!target) return true;
-        const current = Number(target.value ?? 0);
-        if (sideX <= 18) {
-            target.value = clampRangeValue(target, Math.round((current - 0.05) * 100) / 100);
-        } else if (sideX >= half - 18) {
-            target.value = clampRangeValue(target, Math.round((current + 0.05) * 100) / 100);
-        } else {
-            app.canvas?.prompt?.("Value", current, value => {
-                const parsed = Number(value);
-                if (Number.isFinite(parsed)) {
-                    target.value = clampRangeValue(target, parsed);
-                    target.callback?.(target.value);
-                    console.debug("[ED-UI] Sweep range changed", {
-                        node: graphNode?.id, field: target.name, value: target.value,
-                    });
-                }
-                graphNode.setDirtyCanvas(true, true);
-            }, event);
-        }
-        target.callback?.(target.value);
-        console.debug("[ED-UI] Sweep range changed", {
-            node: graphNode?.id, field: target.name, value: target.value,
-        });
-        graphNode.setDirtyCanvas(true, true);
-        return true;
-    };
-    hideWidget(last);
-    return first;
-}
-
 function addRow(node, index, values = {}) {
     const choices = connectedStackNames(node) || ["None"];
     const name = node.addWidget("combo", `scan_lora_name_${index}`,
@@ -416,6 +338,7 @@ function addRow(node, index, values = {}) {
         { min: -10, max: 10, step: 0.01, serialize: true });
     clipFirst.label = "Clip S";
     clipLast.label = "Clip E";
+    ensureRangeInputs(node, index);
     for (const item of [name, toggle, first, last, clipFirst, clipLast]) {
         if (item) item.serialize = true;
     }
@@ -464,6 +387,14 @@ function removeRow(node, index) {
         if (!item) continue;
         removeWidgetSafe(node, item);
     }
+    const inputNames = [
+        `scan_lora_first_strength_${index}`, `scan_lora_last_strength_${index}`,
+        `scan_lora_clip_first_strength_${index}`, `scan_lora_clip_last_strength_${index}`,
+    ];
+    for (const name of inputNames.reverse()) {
+        const slot = node.inputs?.findIndex(input => input.name === name) ?? -1;
+        if (slot >= 0 && node.inputs[slot]?.link == null) node.removeInput?.(slot);
+    }
 }
 
 function ensureRows(node, requested) {
@@ -477,6 +408,7 @@ function ensureRows(node, requested) {
     for (let index = current + 1; index <= count; index++) addRow(node, index);
     for (let index = current; index > count; index--) removeRow(node, index);
     for (let index = 1; index <= count; index++) upgradeExistingRow(node, index);
+    for (let index = 1; index <= count; index++) ensureRangeInputs(node, index);
     node.setSize([node.size[0], node.computeSize()[1]]);
     node.setDirtyCanvas(true, true);
     return count;

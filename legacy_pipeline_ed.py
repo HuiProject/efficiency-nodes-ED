@@ -73,10 +73,12 @@ def build_legacy_xy_script(x_type, x_values, y_type, y_values, grid_spacing, xy_
     y_payload = _parse_semicolon_values(y_type, y_values)
     if str(xy_flip) == "True":
         x_type, y_type, x_payload, y_payload = y_type, x_type, y_payload, x_payload
+    output_mode = str(ksampler_output_image or "Images")
+    output_flag = "Plot+Image" if output_mode == "Plot+Image" else output_mode == "Plot"
     return {
         "xyplot": (
             x_type, x_payload, y_type, y_payload, int(grid_spacing),
-            str(y_label_orientation), False, str(ksampler_output_image) == "Plot", None, None,
+            str(y_label_orientation), False, output_flag, None, None,
         )
     }
 
@@ -213,7 +215,7 @@ class LegacyXYPlotED:
             "grid_spacing": ("INT", {"default": 0, "min": 0, "max": 500, "step": 5}),
             "XY_flip": (["False", "True"],),
             "Y_label_orientation": (["Vertical"],),
-            "ksampler_output_image": (["Images", "Plot"],),
+            "ksampler_output_image": (["Images", "Plot", "Plot+Image"],),
         }}
 
     RETURN_TYPES = ("SCRIPT",)
@@ -319,4 +321,3 @@ NODE_CLASS_MAPPINGS = {
     "KSampler (Efficient) 💬ED (Legacy Compat)": LegacyKSamplerED,
     "XY Plot 💬ED (Legacy Compat)": LegacyXYPlotED,
 }
-

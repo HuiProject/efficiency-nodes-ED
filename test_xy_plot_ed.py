@@ -55,6 +55,13 @@ class TestEDXYPlot(unittest.TestCase):
         )
         self.assertFalse(script["xyplot"][7])
 
+    def test_plot_plus_image_mode_is_preserved(self):
+        script = compose_xyplot_script(
+            0, "False", "Vertical", "False", "Plot+Image", "42",
+            X=("CFG Scale", [1.0]), Y=("Nothing", [""]), dependencies={}
+        )
+        self.assertEqual(script["xyplot"][7], "Plot+Image")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1926,6 +1926,42 @@ def _compact_lora_label(label):
     return f"{name}={strength}"
 
 
+def _lora_axis_label(axis, fallback):
+    """Prefix compact grid labels with the owning XY LoRA mode."""
+    if axis is None:
+        return fallback
+    if isinstance(axis, LegacyOverlayAxisValue):
+        prefix = "Plot: "
+    elif isinstance(axis, EDLoraAxisValue):
+        prefix = "Sweep: "
+    else:
+        prefix = "LoRA: "
+    return prefix + _compact_lora_label(axis.label)
+
+
+def _xy_output_mode(value):
+    """Normalize the XY output selector, including old boolean payloads."""
+    if value is True or str(value) == "True":
+        return "Plot"
+    if value is False or str(value) == "False":
+        return "Images"
+    mode = str(value or "Images")
+    return mode if mode in {"Images", "Plot", "Plot+Image"} else "Images"
+
+
+def _save_xy_ui(primary, extra, prompt=None, extra_pnginfo=None):
+    """Save the selected XY output and optional Plot+Image companion."""
+    result_ui = nodes.PreviewImage().save_images(
+        primary, prompt=prompt, extra_pnginfo=extra_pnginfo
+    )["ui"]
+    if extra is not None:
+        extra_ui = nodes.PreviewImage().save_images(
+            extra, prompt=prompt, extra_pnginfo=extra_pnginfo
+        )["ui"]
+        result_ui.setdefault("images", []).extend(extra_ui.get("images", []))
+    return result_ui
+
+
 class KSampler_ED():
     SET_SEED_CFG_SAMPLER = {
         "from node to ctx": 1,
@@ -2020,24 +2056,20 @@ class KSampler_ED():
             x_type, x_values, y_type, y_values = xy[:4]
             ed_types = {"ED_LORA_SWEEP_X", "ED_LORA_SWEEP_Y"}
             if x_type in ed_types or y_type in ed_types:
-                output_images, latent_list = self.sample_lora_xy_grid_v2(
+                output_images, latent_list, extra_images = self.sample_lora_xy_grid_v2(
                     context, xy, vae, latent_image, seed, steps, cfg, sampler_name,
                     scheduler, denoise, properties['tiled_vae'],
                 )
-                result_ui = nodes.PreviewImage().save_images(
-                    output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
-                )["ui"]
+                result_ui = _save_xy_ui(output_images, extra_images, prompt, extra_pnginfo)
                 set_preview_method(previous_preview_method)
                 context = new_context_ed(context, latent=latent_list, images=output_images)
                 return {"ui": result_ui, "result": (context, output_images, steps)}
             if x_type != "Nothing" or y_type != "Nothing":
-                output_images, latent_list = self.sample_xy_grid_basic(
+                output_images, latent_list, extra_images = self.sample_xy_grid_basic(
                     context, xy, vae, latent_image, seed, steps, cfg,
                     sampler_name, scheduler, denoise, properties['tiled_vae'],
                 )
-                result_ui = nodes.PreviewImage().save_images(
-                    output_images, prompt=prompt, extra_pnginfo=extra_pnginfo
-                )["ui"]
+                result_ui = _save_xy_ui(output_images, extra_images, prompt, extra_pnginfo)
                 set_preview_method(previous_preview_method)
                 context = new_context_ed(context, latent=latent_list, images=output_images)
                 return {"ui": result_ui, "result": (context, output_images, steps)}
@@ -2171,8 +2203,10 @@ class KSampler_ED():
         latent_batch = dict(latents[0])
         latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
         batch_images = torch.cat(images, dim=0)
-        plot_output = bool(xy[7]) if len(xy) > 7 else True
-        return (pil2tensor(grid) if plot_output else batch_images), latent_batch
+        output_mode = _xy_output_mode(xy[7] if len(xy) > 7 else True)
+        primary = pil2tensor(grid) if output_mode == "Plot" else batch_images
+        extra = pil2tensor(grid) if output_mode == "Plot+Image" else None
+        return primary, latent_batch, extra
 
     # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
     @staticmethod
@@ -2424,14 +2458,16 @@ class KSampler_ED():
                     + (f" sweep_stack={sweep_fingerprint}" if sweep_fingerprint else "")
                     + (f" overlay_stack={overlay_fingerprint}" if overlay_fingerprint else "")
                 )
-        x_labels = [_compact_lora_label(axis.label) if axis else "X" for axis in x_axes]
-        y_labels = [_compact_lora_label(axis.label) if axis else "Y" for axis in y_axes]
+        x_labels = [_lora_axis_label(axis, "X") for axis in x_axes]
+        y_labels = [_lora_axis_label(axis, "Y") for axis in y_axes]
         grid = _render_ed_xy_grid(images, x_labels, y_labels, xy[4] if len(xy) > 4 else 0)
         latent_batch = dict(latents[0])
         latent_batch["samples"] = torch.cat([latent["samples"] for latent in latents], dim=0)
         batch_images = torch.cat(images, dim=0)
-        plot_output = bool(xy[7]) if len(xy) > 7 else True
-        return (pil2tensor(grid) if plot_output else batch_images), latent_batch
+        output_mode = _xy_output_mode(xy[7] if len(xy) > 7 else True)
+        primary = pil2tensor(grid) if output_mode == "Plot" else batch_images
+        extra = pil2tensor(grid) if output_mode == "Plot+Image" else None
+        return primary, latent_batch, extra
 
     @staticmethod
     def is_positive_changed(positive, positive_opt):
