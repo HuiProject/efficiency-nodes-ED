@@ -2340,10 +2340,17 @@ class KSampler_ED():
                     if base_model is None or base_clip is None:
                         raise ValueError("ED legacy LoRA Plot overlay requires applied MODEL/CLIP in context")
                     final_stack = overlay_stack
-                    cell_model, cell_clip = ED_Util.apply_load_lora(
-                        final_stack, base_model, base_clip,
-                        f"ED Legacy LoRA Plot [{yi},{xi}]",
-                    )
+                    if final_stack:
+                        cell_model, cell_clip = ED_Util.apply_load_lora(
+                            final_stack, base_model, base_clip,
+                            f"ED Legacy LoRA Plot [{yi},{xi}]",
+                        )
+                    else:
+                        # An inactive Plot direction contributes a baseline
+                        # cell.  Do not call apply_load_lora([]), whose legacy
+                        # helper expects at least one tuple.
+                        cell_model, cell_clip = base_model, base_clip
+                        print(f"[XY-ED-PLOT] baseline cell=({yi},{xi}) overlay_count=0")
                     final_fingerprint = stack_fingerprint(final_stack)
                 elif isinstance(x_axis, XYLoraAxisValue) or isinstance(y_axis, XYLoraAxisValue):
                     # Compatibility values already contain partial stack

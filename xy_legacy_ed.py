@@ -18,14 +18,14 @@ try:
     from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
     from .xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
-        normalize_plot_rows, normalize_plot_range_rows,
+        normalize_plot_rows, normalize_plot_range_rows, normalize_sweep_axis,
     )
 except ImportError:  # pragma: no cover - direct development import
     from xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
     from xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, make_axis_value, make_stack_sweep
     from xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
-        normalize_plot_rows, normalize_plot_range_rows,
+        normalize_plot_rows, normalize_plot_range_rows, normalize_sweep_axis,
     )
 
 
@@ -190,11 +190,18 @@ class LegacyXYLoraPlotED:
         required = {
             "lora_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_SCAN_LORAS, "step": 1}),
             "X_batch_count": ("INT", {"default": XYPLOT_DEF, "min": 1, "max": XYPLOT_LIM, "step": 1}),
-            "X_first_value": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+            "X_first_value": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
             "X_last_value": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
             "Y_batch_count": ("INT", {"default": XYPLOT_DEF, "min": 1, "max": XYPLOT_LIM, "step": 1}),
-            "Y_first_value": ("FLOAT", {"default": 0.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+            "Y_first_value": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
             "Y_last_value": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
+            # Select the active sweep direction and weight field.  Kept at the
+            # end of the required contract so old Plot widget indexes remain
+            # readable by the frontend migration code.
+            "axis": ([
+                "X Model", "X Clip", "Y Model", "Y Clip",
+                "X Model and Clip", "Y Model and Clip",
+            ], {"default": "X Model"}),
         }
         return {"required": required, "optional": _FlexiblePlotInputs({
             "lora_pipe": ("ED_LORA_PIPE",),
@@ -209,7 +216,7 @@ class LegacyXYLoraPlotED:
     def xy_value(self, *args, lora_count=None, X_batch_count=None,
                  X_first_value=None, X_last_value=None, Y_batch_count=None,
                  Y_first_value=None, Y_last_value=None, lora_stack=None,
-                 lora_pipe=None, **kwargs):
+                 lora_pipe=None, axis=None, **kwargs):
         # Saved graphs from the historical plugin may still submit the old
         # positional contract.  Keep a narrow compatibility branch while the
         # visible INPUT_TYPES remains the compact ED contract.
@@ -238,10 +245,10 @@ class LegacyXYLoraPlotED:
         if lora_count is None:
             lora_count = 0
         X_batch_count = XYPLOT_DEF if X_batch_count is None else X_batch_count
-        X_first_value = 0.0 if X_first_value is None else X_first_value
+        X_first_value = 1.0 if X_first_value is None else X_first_value
         X_last_value = 1.0 if X_last_value is None else X_last_value
         Y_batch_count = XYPLOT_DEF if Y_batch_count is None else Y_batch_count
-        Y_first_value = 0.0 if Y_first_value is None else Y_first_value
+        Y_first_value = 1.0 if Y_first_value is None else Y_first_value
         Y_last_value = 1.0 if Y_last_value is None else Y_last_value
         base_stack = _stack_from_inputs(lora_stack, lora_pipe)
         if not base_stack:
@@ -259,36 +266,65 @@ class LegacyXYLoraPlotED:
         if error:
             raise ValueError(error)
 
-        # Deliberately preserve the pre-Sweep behavior: each cell starts with
+        # With no axis (old serialized calls), preserve the pre-Sweep behavior:
+        # each cell starts with
         # the model/clip already produced by Power Loader and applies the
         # selected LoRAs a second time.  X changes model strength only and Y
         # changes clip strength only; the sampler combines both markers.
         # Each row owns four range values.  X/Y batch counts remain shared so
         # the node still forms one rectangular XY grid; a normalized batch
         # position is interpolated separately for every selected LoRA.
-        x_positions = generate_sweep_values(X_batch_count, 0.0, 1.0)
-        y_positions = generate_sweep_values(Y_batch_count, 0.0, 1.0)
+        legacy_dual_axis = axis in (None, "")
+        if legacy_dual_axis:
+            axis_name, axis_direction, axis_mode = "Legacy X Model / Y Clip", None, None
+            x_positions = generate_sweep_values(X_batch_count, 0.0, 1.0)
+            y_positions = generate_sweep_values(Y_batch_count, 0.0, 1.0)
+        else:
+            axis_name, axis_direction, axis_mode = normalize_sweep_axis(axis)
+            positions = generate_sweep_values(
+                X_batch_count if axis_direction == "X" else Y_batch_count,
+                0.0, 1.0,
+            )
+            x_positions = positions if axis_direction == "X" else [0.0]
+            y_positions = positions if axis_direction == "Y" else [0.0]
 
-        def overlay_values(position, field):
+        def overlay_values(position, range_axis, mode="model"):
             entries = []
             labels = []
             for name, x_first, x_last, y_first, y_last in rows:
-                if field == "model":
-                    value = x_first + (x_last - x_first) * float(position)
-                    entries.append((name, float(value), None))
+                if range_axis == "x":
+                    first, last = x_first, x_last
                 else:
-                    value = y_first + (y_last - y_first) * float(position)
-                    entries.append((name, None, float(value)))
-                suffix = "MStr" if field == "model" else "CStr"
+                    first, last = y_first, y_last
+                value = first + (last - first) * float(position)
+                model_value = float(value) if mode in {"model", "both"} else None
+                clip_value = float(value) if mode in {"clip", "both"} else None
+                entries.append((name, model_value, clip_value))
+                suffix = "MStr" if mode == "model" else "CStr" if mode == "clip" else "MStr+CStr"
                 labels.append(f"{name} {suffix}={float(value):.6g}")
-            suffix = "MStr" if field == "model" else "CStr"
+            suffix = "MStr" if mode == "model" else "CStr" if mode == "clip" else "MStr+CStr"
             return LegacyOverlayAxisValue(entries, ", ".join(labels))
 
-        x_axis = ("LoRA MStr", [overlay_values(position, "model") for position in x_positions])
-        y_axis = ("LoRA CStr", [overlay_values(position, "clip") for position in y_positions])
+        if legacy_dual_axis:
+            x_axis = ("LoRA MStr", [overlay_values(position, "x", "model") for position in x_positions])
+            y_axis = ("LoRA CStr", [overlay_values(position, "y", "clip") for position in y_positions])
+        elif axis_direction == "X":
+            x_axis = (
+                f"LoRA {axis_mode.title()}",
+                [overlay_values(position, "x", axis_mode)
+                 for position in x_positions],
+            )
+            y_axis = ("Baseline", [LegacyOverlayAxisValue([], "Baseline")])
+        else:
+            x_axis = ("Baseline", [LegacyOverlayAxisValue([], "Baseline")])
+            y_axis = (
+                f"LoRA {axis_mode.title()}",
+                [overlay_values(position, "y", axis_mode)
+                 for position in y_positions],
+            )
         print(
             f"[ED-XY-PLOT] stack count={len(base_stack)} "
-            f"rows={rows} mode=legacy-overlay "
+            f"rows={rows} mode={'legacy-overlay' if legacy_dual_axis else axis_name} "
             f"X values={[v.label for v in x_axis[1]]} Y values={[v.label for v in y_axis[1]]}"
         )
         return (x_axis, y_axis)

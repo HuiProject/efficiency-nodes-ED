@@ -7,6 +7,10 @@ const NODE_NAME = "XY Input: LoRA Plot";
 const MAX_ROWS = 50;
 const ROW_RE = /^scan_lora_name_(\d+)$/;
 const GLOBAL_RANGES = ["X_first_value", "X_last_value", "Y_first_value", "Y_last_value"];
+const AXIS_OPTIONS = [
+    "X Model", "X Clip", "Y Model", "Y Clip",
+    "X Model and Clip", "Y Model and Clip",
+];
 
 function isPlot(data) {
     return [data?.name, data?.comfyClass, data?.type, data?.title,
@@ -218,9 +222,9 @@ function num(node, name, fallback) {
 
 function defaults(node) {
     return {
-        xFirst: num(node, "X_first_value", 0.0),
+        xFirst: num(node, "X_first_value", 1.0),
         xLast: num(node, "X_last_value", 1.0),
-        yFirst: num(node, "Y_first_value", 0.0),
+        yFirst: num(node, "Y_first_value", 1.0),
         yLast: num(node, "Y_last_value", 1.0),
     };
 }
@@ -321,6 +325,43 @@ function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
     return first;
 }
 
+function showWidget(item) {
+    if (!item?.__edPlotHidden) return;
+    item.type = item.__edPlotOriginalType;
+    item.computeSize = item.__edPlotOriginalComputeSize;
+    item.hidden = false;
+    if (item.options) item.options.hidden = false;
+    item.__edPlotHidden = false;
+}
+
+function syncAxisVisibility(node) {
+    const axis = String(widget(node, "axis")?.value || "X Model");
+    const valid = AXIS_OPTIONS.includes(axis) ? axis : "X Model";
+    if (node.__edPlotAxisState === valid && !node.__edPlotAxisForceSync) return;
+    node.__edPlotAxisState = valid;
+    node.__edPlotAxisForceSync = false;
+    const mode = valid.includes("Model and Clip") ? "both"
+        : valid.endsWith("Model") ? "model" : "clip";
+    for (let index = 1; index <= MAX_ROWS; index += 1) {
+        const parts = rowWidgets(node, index);
+        if (!parts.selector) continue;
+        const setPairVisibility = (first, last, visible) => {
+            if (visible) {
+                showWidget(first);
+                hideWidget(last);
+            } else {
+                hideWidget(first);
+                hideWidget(last);
+            }
+        };
+        setPairVisibility(parts.xFirst, parts.xLast, mode === "model" || mode === "both");
+        setPairVisibility(parts.yFirst, parts.yLast, mode === "clip" || mode === "both");
+    }
+    const width = node.size?.[0] || 220;
+    node.setSize?.([width, node.computeSize?.()[1] || 140]);
+    node.setDirtyCanvas(true, true);
+}
+
 function setRangeLabels(node, index) {
     const labels = {
         [`scan_lora_x_first_strength_${index}`]: "Model S",
@@ -417,6 +458,7 @@ function ensureRows(node, requested) {
     const width = node.size?.[0] || 220;
     const computed = typeof node.computeSize === "function" ? node.computeSize() : [width, 140];
     node.setSize?.([width, Math.max(140, computed[1] || 0)]);
+    node.__edPlotAxisForceSync = true;
     node.setDirtyCanvas(true, true);
     return count;
 }
@@ -432,13 +474,18 @@ function restoreSaved(node) {
     let count = Number(countWidget?.value ?? 1);
     const rows = [];
     if (Array.isArray(saved)) {
-        // Current base layout is 7 values: count, X/Y batch counts and the
-        // four hidden global fallback ranges. New rows use 6 values.
+        // Current base layout is 8 values: count, X/Y batch counts, the four
+        // hidden global fallback ranges, and the axis selector. Older Plot
+        // saves have only 7 base values; detect both layouts so they migrate
+        // without shifting the first row.
         if (saved.length >= 7 && Number.isFinite(Number(saved[0]))) {
             count = Number(saved[0]);
             const fallback = defaults(node);
-            const width = saved.length >= 7 + count * 6 ? 6 : 2;
-            let offset = 7;
+            const hasAxis = AXIS_OPTIONS.includes(String(saved[7] ?? ""));
+            const baseOffset = hasAxis ? 8 : 7;
+            if (hasAxis && widget(node, "axis")) widget(node, "axis").value = String(saved[7]);
+            const width = saved.length >= baseOffset + count * 6 ? 6 : 2;
+            let offset = baseOffset;
             for (let i = 0; i < count; i += 1) {
                 const row = {
                     name: saved[offset], toggle: saved[offset + 1],
@@ -483,6 +530,8 @@ function restoreSaved(node) {
         if (row.yLast) row.yLast.value = Number(savedRow.yLast ?? row.yLast.value);
     });
     hideGlobalRanges(node);
+    node.__edPlotAxisForceSync = true;
+    syncAxisVisibility(node);
     refreshChoices(node);
     node.__edPlotRowsRestored = true;
 }
@@ -499,9 +548,19 @@ function initialize(node) {
             const result = original?.apply(this, arguments);
             const current = countValue(value, count.value);
             ensureRows(node, current);
+            syncAxisVisibility(node);
             refreshChoices(node);
             console.debug("[ED-UI] LoRA Plot count changed", { node: node.id, count: current });
             return result;
+        };
+    }
+    const axisWidget = widget(node, "axis");
+    if (axisWidget) {
+        const originalAxisCallback = axisWidget.callback;
+        axisWidget.callback = function(value) {
+            originalAxisCallback?.apply(this, arguments);
+            syncAxisVisibility(node);
+            console.debug("[ED-UI] Plot axis changed", { node: node.id, axis: this.value ?? value });
         };
     }
     const previousWidgetChanged = node.onWidgetChanged;
@@ -512,11 +571,14 @@ function initialize(node) {
             this.__edPlotSyncing = true;
             try {
                 ensureRows(this, value ?? widget(this, "lora_count")?.value);
+                syncAxisVisibility(this);
                 refreshChoices(this);
             } finally { this.__edPlotSyncing = false; }
         } else if (typeof widgetName === "string" && widgetName.startsWith("scan_lora_name_")) {
             refreshChoices(this);
             this.setDirtyCanvas(true, true);
+        } else if (widgetName === "axis") {
+            syncAxisVisibility(this);
         }
         return result;
     };
@@ -541,10 +603,12 @@ function initialize(node) {
                 this.__edPlotSyncing = true;
                 try { ensureRows(this, desired); } finally { this.__edPlotSyncing = false; }
             }
+            syncAxisVisibility(this);
         }
         return previousDraw?.apply(this, arguments);
     };
     ensureRows(node, count?.value ?? 1);
+    syncAxisVisibility(node);
     refreshChoices(node);
 }
 

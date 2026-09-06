@@ -27,6 +27,30 @@ class TestEDLoraPlot(unittest.TestCase):
             names & {"X_first_value", "X_last_value", "Y_first_value", "Y_last_value"},
             {"X_first_value", "X_last_value", "Y_first_value", "Y_last_value"},
         )
+        self.assertIn("axis", names)
+        self.assertEqual(LegacyXYLoraPlotED.INPUT_TYPES()["required"]["X_first_value"][1]["default"], 1.0)
+        self.assertEqual(LegacyXYLoraPlotED.INPUT_TYPES()["required"]["Y_first_value"][1]["default"], 1.0)
+
+    def test_axis_modes_select_one_direction_and_weight_field(self):
+        common = dict(
+            lora_count=1, X_batch_count=2, X_first_value=0.2, X_last_value=0.8,
+            Y_batch_count=2, Y_first_value=0.3, Y_last_value=0.7,
+            lora_pipe=self.pipe,
+            scan_lora_name_1=self.stack[0][0], scan_lora_1_toggle=True,
+            scan_lora_x_first_strength_1=0.2, scan_lora_x_last_strength_1=0.8,
+            scan_lora_y_first_strength_1=0.3, scan_lora_y_last_strength_1=0.7,
+        )
+        x_clip, x_baseline = LegacyXYLoraPlotED().xy_value(axis="X Clip", **common)
+        self.assertEqual(len(x_clip[1]), 2)
+        self.assertEqual(len(x_baseline[1]), 1)
+        self.assertEqual(x_clip[1][0].overrides["anima\\first.safetensors"],
+                         ("Anima\\first.safetensors", None, 0.2))
+
+        y_model, y_model_axis = LegacyXYLoraPlotED().xy_value(axis="Y Model", **common)
+        self.assertEqual(len(y_model[1]), 1)
+        self.assertEqual(len(y_model_axis[1]), 2)
+        self.assertEqual(y_model_axis[1][-1].overrides["anima\\first.safetensors"],
+                         ("Anima\\first.safetensors", 0.7, None))
 
     def test_two_selected_loras_build_second_layer_model_and_clip_axes(self):
         x_axis, y_axis = LegacyXYLoraPlotED().xy_value(

@@ -1,26 +1,30 @@
 # ED LoRA Plot
 
-`XY Input: LoRA Plot` is an ED-owned two-axis composer for the historical
+`XY Input: LoRA Plot` is an ED-owned axis-profile composer for the historical
 **post-stack overlay** behavior. Connect
 `Power Lora Loader 💬ED (LORA_STACK).LORA_PIPE` to its `lora_pipe` input,
 set `lora_count`, and choose rows from the connected stack. `X_batch_count`
 and `Y_batch_count` are shared grid dimensions; each selected row has its own
-four range controls (`X 起`, `X 止`, `Y 起`, `Y 止`). At each normalized grid
-position, that row is interpolated from its own X/Y range. The same selected
-rows are applied to the model/CLIP that Power Loader has **already** modified.
-This intentionally loads the selected LoRA layer a second time and therefore
-differs from `XY Input: LoRA Sweep 💬ED`.
+Model and Clip range controls. The `axis` selector uses the same six options as
+LoRA Sweep: `X Model`, `X Clip`, `Y Model`, `Y Clip`, `X Model and Clip`, and
+`Y Model and Clip`. The selected direction is scanned and the other direction
+is a single baseline cell; `Model and Clip` changes both weights together. The
+new Model/Clip range controls default to `1.0`; set Start/End explicitly for a
+strength sweep.
+same selected rows are applied to the model/CLIP that Power Loader has
+**already** modified. This intentionally loads the selected LoRA layer a
+second time and therefore differs from `XY Input: LoRA Sweep 💬ED`.
 
 The four hidden `X_first_value`, `X_last_value`, `Y_first_value`, and
 `Y_last_value` widgets are compatibility fallbacks for old saved workflows.
 New rows serialize their explicit ranges; changing a global fallback does not
 overwrite a row that already has explicit values.
 
-The visible range controls are compact paired bars: `X Model S` and `X Model E`
-share one row, as do `Y CLIP S` and `Y CLIP E` (`S` = Start, `E` = End). X is
-Model strength and Y is CLIP strength. The serialized backend names still use
-`scan_lora_*` for compatibility, but that implementation name is not shown in
-the node UI.
+The visible range controls are compact paired bars: `Model S/E` and `Clip S/E`
+(`S` = Start, `E` = End). The active range is shown according to `axis`; the
+inactive range is hidden but remains serialized for compatibility. The
+serialized backend names still use `scan_lora_*` for compatibility, but that
+implementation name is not shown in the node UI.
 
 The selector can include disabled Power Loader rows: they are not part of the
 first stack application, but are valid second-layer overlay targets. It cannot
