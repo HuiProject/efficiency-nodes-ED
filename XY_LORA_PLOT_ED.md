@@ -3,28 +3,26 @@
 `XY Input: LoRA Plot` is an ED-owned axis-profile composer for the historical
 **post-stack overlay** behavior. Connect
 `Power Lora Loader 💬ED (LORA_STACK).LORA_PIPE` to its `lora_pipe` input,
-set `lora_count`, and choose rows from the connected stack. `X_batch_count`
-and `Y_batch_count` are shared grid dimensions; each selected row has its own
-Model and Clip range controls. The `axis` selector uses the same six options as
+set `lora_count`, and choose rows from the connected stack. `batch_count` is
+the single scan dimension; `axis` chooses whether its cells are sent to X or Y.
+Each selected row has its own Model and Clip range controls. The `axis` selector uses the same six options as
 LoRA Sweep: `X Model`, `X Clip`, `Y Model`, `Y Clip`, `X Model and Clip`, and
-`Y Model and Clip`. The selected direction is scanned and the other direction
-is a single baseline cell; `Model and Clip` changes both weights together. The
+`Y Model and Clip`. The selected direction is scanned as one axis;
+`Model and Clip` changes both weights together. The
 new Model/Clip range controls default to `1.0`; set Start/End explicitly for a
 strength sweep.
 same selected rows are applied to the model/CLIP that Power Loader has
 **already** modified. This intentionally loads the selected LoRA layer a
 second time and therefore differs from `XY Input: LoRA Sweep 💬ED`.
 
-The four hidden `X_first_value`, `X_last_value`, `Y_first_value`, and
-`Y_last_value` widgets are compatibility fallbacks for old saved workflows.
-New rows serialize their explicit ranges; changing a global fallback does not
-overwrite a row that already has explicit values.
+There are no hidden global range or second batch widgets. Every active row
+serializes its explicit Model/Clip start and end values.
 
 The visible range controls are compact paired bars: `Model S/E` and `Clip S/E`
 (`S` = Start, `E` = End). The active range is shown according to `axis`; the
-inactive range is hidden but remains serialized for compatibility. The
-serialized backend names still use `scan_lora_*` for compatibility, but that
-implementation name is not shown in the node UI.
+inactive range is hidden to keep the node compact. The serialized backend names
+still use `scan_lora_*` for the active dynamic rows; that implementation name is
+not shown in the node UI.
 
 The selector can include disabled Power Loader rows: they are not part of the
 first stack application, but are valid second-layer overlay targets. It cannot
@@ -49,9 +47,10 @@ The two states intentionally produce different images. The legacy overlay
 sampler logs the target state through the Power Loader stack count and always
 prints `mode=legacy-overlay` per generated cell.
 
-Connect the node's `X` and `Y` outputs to the matching `XY Plot` inputs. With
-`lora_count=2`, both rows are applied at every cell, each using its own four
-range values; the node does not create a permanently tall set of unused rows.
+Connect the node's single `XY_AXIS` output to the matching `XY Plot.X` or
+`XY Plot.Y` input selected by `axis`. With `lora_count=2`, both rows are applied
+at every cell, each using its own four range values; the node does not create a
+permanently tall set of unused rows.
 Connect `XY Plot.dependencies` to `Efficient Loader 💬ED.DEPENDENCIES` when
 using encoded legacy axes or when retaining the loader metadata in saved
 workflows. The sampler uses ED-local core APIs only; it does not import another
@@ -63,8 +62,7 @@ custom node.
 UNET/CLIP → Power Loader ED → Ext Model Input → Efficient Loader ED → KSampler ED
                   ├─ LORA_PIPE → XY Input: LoRA Plot
                   └─ CONTEXT ────────────────────────────┘
-XY Input: LoRA Plot.X → XY Plot.X
-XY Input: LoRA Plot.Y → XY Plot.Y
+XY Input: LoRA Plot.XY_AXIS → XY Plot.X or XY Plot.Y
 Efficient Loader ED.DEPENDENCIES → XY Plot.dependencies
 XY Plot.SCRIPT → KSampler ED.script
 ```
@@ -85,7 +83,7 @@ socket unconnected unless another ED node explicitly accepts
 Boundary logs use the following prefixes:
 
 ```text
-[ED-XY-PLOT] stack count=... rows=... X values=... Y values=...
+[ED-XY-PLOT] stack count=... rows=... axis=... values=...
 [ED-XY-PLOT] compose X=... Y=... dependencies=connected|missing
 [XY-ED-V2] cell=(row,column) ... stack=<fingerprint>
 ```

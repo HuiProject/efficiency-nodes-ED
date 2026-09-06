@@ -25,16 +25,18 @@ class TestLegacyXYAdapters(unittest.TestCase):
         self.assertEqual(axes[0][0], ("Anima\\base.safetensors", 0.25, 0.5))
         self.assertEqual(axes[0][1], ("Anima\\stack.safetensors", 0.6, 0.7))
 
-    def test_plot_connected_stack_uses_target_range(self):
-        result = LegacyXYLoraPlotED().xy_value(
-            "X: Connected Stack LoRA Strength", "Anima\\target.safetensors",
-            1.0, 1.0, 3, "I:\\", False, "ascending", 0.0, 1.0,
-            3, 0.0, 1.0,
+    def test_plot_connected_stack_uses_one_axis_contract(self):
+        axis, = LegacyXYLoraPlotED().xy_value(
+            batch_count=3, lora_count=1, axis="X Model", lora_pipe=None,
             lora_stack=[("Anima\\target.safetensors", 0.6, 0.6)],
+            scan_lora_name_1="Anima\\target.safetensors",
+            scan_lora_1_toggle=True,
+            scan_lora_x_first_strength_1=0.0,
+            scan_lora_x_last_strength_1=1.0,
         )
-        axis_type, axes = result[0]
-        self.assertEqual(axis_type, "LoRA Wt")
-        self.assertEqual([axis.model_override for axis in axes], [0.0, 0.5, 1.0])
+        self.assertEqual(axis[0], "ED_LORA_SWEEP_X")
+        self.assertEqual([value.overrides["anima\\target.safetensors"][1]
+                          for value in axis[1]], [0.0, 0.5, 1.0])
 
     def test_plot_composer_retags_legacy_axis_for_ed_sampler(self):
         axis = LegacyXYLoraED().xy_value(

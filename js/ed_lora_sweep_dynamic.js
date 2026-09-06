@@ -5,6 +5,10 @@ import { app } from "../../scripts/app.js";
 // demand and serialized with the node.
 const MAX_ROWS = 50;
 const ROW_RE = /^scan_lora_name_(\d+)$/;
+const AXIS_OPTIONS = [
+    "X Model", "X Clip", "Y Model", "Y Clip",
+    "X Model and Clip", "Y Model and Clip",
+];
 
 function isSweep(data) {
     return [data?.name, data?.comfyClass, data?.type, data?.title,
@@ -455,26 +459,18 @@ function restoreSavedRows(node) {
     const saved = node.__edSweepSavedValues;
     let countWidget = widget(node, "lora_count");
     let count = Number(countWidget?.value);
-    let legacyName = null;
-    let legacyFirst = 1.0;
-    let legacyLast = 1.0;
-    // Both versions retain legacy fields. New compact nodes have a numeric
-    // lora_count at index 5; older nodes have no such value and start with a
-    // single target at index 2.
-    const hasCompactCount = Array.isArray(saved) && saved[5] !== null &&
-        saved[5] !== undefined && Number.isFinite(Number(saved[5]));
-    if (!hasCompactCount && Array.isArray(saved) && typeof saved[2] === "string") {
-        legacyName = saved[2];
-        legacyFirst = Number(saved[3] ?? legacyFirst);
-        legacyLast = Number(saved[4] ?? legacyLast);
-        count = legacyName && legacyName !== "None" ? 1 : 0;
-    } else if (hasCompactCount) {
-        count = Number(saved[5]);
+    // New compact layout is batch_count, lora_count, axis, then the dynamic
+    // row values. Legacy fixed target fields are no longer part of the node
+    // contract, so do not attempt positional guesses that can create ghosts.
+    const hasCompactCount = Array.isArray(saved) &&
+        Number.isFinite(Number(saved[0])) && Number.isFinite(Number(saved[1])) &&
+        AXIS_OPTIONS.includes(String(saved[2] ?? ""));
+    if (hasCompactCount) {
+        count = Number(saved[1]);
+        if (widget(node, "batch_count")) widget(node, "batch_count").value = Number(saved[0]);
+        if (widget(node, "axis")) widget(node, "axis").value = String(saved[2]);
     }
-    if (!Number.isFinite(count)) count = legacyName ? 1 : 0;
-    // Workflows saved before lora_count existed have no count widget. Add a
-    // real LiteGraph widget during migration so the compact UI is usable and
-    // the value is serialized on the next save.
+    if (!Number.isFinite(count)) count = 0;
     if (!countWidget && typeof node.addWidget === "function") {
         countWidget = node.addWidget("number", "lora_count", count, () => {},
             { min: 0, max: MAX_ROWS, step: 1, serialize: true });
@@ -486,9 +482,9 @@ function restoreSavedRows(node) {
 
     // Current format: base widgets occupy indexes 0..5, followed by six
     // values per row: name, toggle, model first/last, clip first/last.
-    if (!legacyName && hasCompactCount && Array.isArray(saved) && saved.length > 6) {
-        let offset = 6;
-        const rowWidth = saved.length >= 6 + count * 6 ? 6 : 4;
+    if (hasCompactCount && Array.isArray(saved) && saved.length > 3) {
+        let offset = 3;
+        const rowWidth = saved.length >= 3 + count * 6 ? 6 : 4;
         for (let index = 1; index <= count; index++) {
             const parts = rowWidgets(node, index);
             if (!parts.name) continue;
@@ -507,13 +503,6 @@ function restoreSavedRows(node) {
             }
             offset += rowWidth;
         }
-    } else if (count === 1 && legacyName && legacyName !== "None") {
-        const parts = rowWidgets(node, 1);
-        parts.name.value = legacyName;
-        parts.first.value = legacyFirst;
-        parts.last.value = legacyLast;
-        if (parts.clipFirst) parts.clipFirst.value = legacyFirst;
-        if (parts.clipLast) parts.clipLast.value = legacyLast;
     }
     refreshChoices(node);
     node.__edSweepRowsRestored = true;
@@ -523,9 +512,6 @@ function initialize(node) {
     if (!isSweep(node) || node.__edSweepDynamicInitialized) return;
     node.__edSweepDynamicInitialized = true;
     node.serialize_widgets = true;
-    hideWidget(widget(node, "target_lora"));
-    hideWidget(widget(node, "first_strength"));
-    hideWidget(widget(node, "last_strength"));
 
     let countWidget = widget(node, "lora_count");
     if (!countWidget && !node.__edSweepRowsRestored && node.widgets?.length) {
@@ -588,9 +574,6 @@ function initialize(node) {
     const originalDrawForeground = node.onDrawForeground;
     node.onDrawForeground = function (ctx) {
         if (!this.__edSweepSyncing) {
-            hideWidget(widget(this, "target_lora"));
-            hideWidget(widget(this, "first_strength"));
-            hideWidget(widget(this, "last_strength"));
             const count = Number(widget(this, "lora_count")?.value ?? 0);
             const indexes = (this.widgets || []).map(item => {
                 const match = ROW_RE.exec(item.name || "");

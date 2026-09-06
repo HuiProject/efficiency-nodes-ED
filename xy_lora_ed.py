@@ -306,10 +306,10 @@ def normalize_plot_range_rows(lora_count, row_values, x_first_default,
                               max_rows=50):
     """Return enabled Plot rows with their own X/Y ranges.
 
-    The first compact Plot revision had one shared X range and one shared Y
-    range.  Those values remain fallbacks so saved workflows retain exactly
-    their old output.  New rows serialize four explicit fields, letting every
-    selected LoRA interpolate independently at the same X/Y batch index.
+    The default arguments are retained for the pure helper API, but the ED
+    node now supplies a neutral ``1.0`` fallback and serializes four explicit
+    values for every selected LoRA. This keeps interpolation independent per
+    row and avoids a second global batch/range contract.
     """
     count = max(0, min(int(lora_count or 0), int(max_rows)))
     rows = []

@@ -6,7 +6,6 @@ import { app } from "../../scripts/app.js";
 const NODE_NAME = "XY Input: LoRA Plot";
 const MAX_ROWS = 50;
 const ROW_RE = /^scan_lora_name_(\d+)$/;
-const GLOBAL_RANGES = ["X_first_value", "X_last_value", "Y_first_value", "Y_last_value"];
 const AXIS_OPTIONS = [
     "X Model", "X Clip", "Y Model", "Y Clip",
     "X Model and Clip", "Y Model and Clip",
@@ -222,10 +221,10 @@ function num(node, name, fallback) {
 
 function defaults(node) {
     return {
-        xFirst: num(node, "X_first_value", 1.0),
-        xLast: num(node, "X_last_value", 1.0),
-        yFirst: num(node, "Y_first_value", 1.0),
-        yLast: num(node, "Y_last_value", 1.0),
+        xFirst: 1.0,
+        xLast: 1.0,
+        yFirst: 1.0,
+        yLast: 1.0,
     };
 }
 
@@ -463,9 +462,7 @@ function ensureRows(node, requested) {
     return count;
 }
 
-function hideGlobalRanges(node) {
-    for (const name of GLOBAL_RANGES) hideWidget(widget(node, name));
-}
+function hideGlobalRanges(node) { /* retained as a no-op for old extension hooks */ }
 
 function restoreSaved(node) {
     if (node.__edPlotRowsRestored) return;
@@ -474,47 +471,23 @@ function restoreSaved(node) {
     let count = Number(countWidget?.value ?? 1);
     const rows = [];
     if (Array.isArray(saved)) {
-        // Current base layout is 8 values: count, X/Y batch counts, the four
-        // hidden global fallback ranges, and the axis selector. Older Plot
-        // saves have only 7 base values; detect both layouts so they migrate
-        // without shifting the first row.
-        if (saved.length >= 7 && Number.isFinite(Number(saved[0]))) {
-            count = Number(saved[0]);
-            const fallback = defaults(node);
-            const hasAxis = AXIS_OPTIONS.includes(String(saved[7] ?? ""));
-            const baseOffset = hasAxis ? 8 : 7;
-            if (hasAxis && widget(node, "axis")) widget(node, "axis").value = String(saved[7]);
-            const width = saved.length >= baseOffset + count * 6 ? 6 : 2;
-            let offset = baseOffset;
+        // New compact layout: batch_count, lora_count, axis, then six values
+        // per dynamic row.  Old serialized layouts are intentionally not
+        // guessed here; this node now has a clean single-axis contract.
+        if (saved.length >= 3 && Number.isFinite(Number(saved[0])) &&
+            Number.isFinite(Number(saved[1])) && AXIS_OPTIONS.includes(String(saved[2]))) {
+            count = Number(saved[1]);
+            if (widget(node, "batch_count")) widget(node, "batch_count").value = Number(saved[0]);
+            if (widget(node, "axis")) widget(node, "axis").value = String(saved[2]);
+            const offset = 3;
             for (let i = 0; i < count; i += 1) {
-                const row = {
-                    name: saved[offset], toggle: saved[offset + 1],
-                    xFirst: fallback.xFirst, xLast: fallback.xLast,
-                    yFirst: fallback.yFirst, yLast: fallback.yLast,
-                };
-                if (width === 6) {
-                    row.xFirst = saved[offset + 2] ?? row.xFirst;
-                    row.xLast = saved[offset + 3] ?? row.xLast;
-                    row.yFirst = saved[offset + 4] ?? row.yFirst;
-                    row.yLast = saved[offset + 5] ?? row.yLast;
-                }
-                rows.push(row);
-                offset += width;
+                const at = offset + i * 6;
+                rows.push({
+                    name: saved[at], toggle: saved[at + 1],
+                    xFirst: saved[at + 2], xLast: saved[at + 3],
+                    yFirst: saved[at + 4], yLast: saved[at + 5],
+                });
             }
-        } else if (saved.length >= 13 && typeof saved[0] === "string") {
-            // Historical Plot layout migration.
-            count = saved[1] && saved[1] !== "None" ? 1 : 0;
-            const values = {
-                X_batch_count: saved[4], X_first_value: saved[8], X_last_value: saved[9],
-                Y_batch_count: saved[10], Y_first_value: saved[11], Y_last_value: saved[12],
-            };
-            for (const [name, value] of Object.entries(values)) {
-                const item = widget(node, name);
-                if (item && value !== undefined) item.value = value;
-            }
-            const fallback = defaults(node);
-            if (count) rows.push({ name: saved[1], toggle: true, ...fallback });
-            console.debug("[ED-UI] migrated historical LoRA Plot widgets", { node: node.id });
         }
     }
     if (!Number.isFinite(count)) count = 0;
@@ -529,7 +502,6 @@ function restoreSaved(node) {
         if (row.yFirst) row.yFirst.value = Number(savedRow.yFirst ?? row.yFirst.value);
         if (row.yLast) row.yLast.value = Number(savedRow.yLast ?? row.yLast.value);
     });
-    hideGlobalRanges(node);
     node.__edPlotAxisForceSync = true;
     syncAxisVisibility(node);
     refreshChoices(node);

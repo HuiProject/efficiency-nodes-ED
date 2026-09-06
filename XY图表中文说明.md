@@ -35,17 +35,14 @@
 
 ### 每个 LoRA 独立范围
 
-- `X_batch_count` 与 `Y_batch_count` 仍是整个图表共用的列数/行数。
+- `batch_count` 是当前 Plot 轴的唯一批次数；`axis` 决定输出接到 XY Plot 的 X 或 Y。
 - 每个已添加的 LoRA 行各自拥有 `X 起`、`X 止`、`Y 起`、`Y 止` 四个强度值。
 - 图表在同一归一化位置（0→1）分别插值每一行的范围，因此 `lora_count=2`
   时两个 LoRA 可以使用不同的 X/Y 起止值，但仍生成同一个矩形网格。
 - 行的名称与启用开关在界面上合并为一个节点内控件；候选列表只来自已连接的
   `Power Lora Loader ED`，连接变化后会自动刷新并保留仍有效的选择。
-- 旧工作流没有行级范围时，隐藏的全局 `X_first_value`、`X_last_value`、
-  `Y_first_value`、`Y_last_value` 会作为兼容回退值。
-- 界面标签统一为 `L1 MStr 起/止`（第 1 个 LoRA 的模型强度）和
-  `L1 CStr 起/止`（第 1 个 LoRA 的 CLIP 强度）；第 2 个 LoRA 对应 `L2`。
-  后端仍保留 `scan_lora_*` 名称用于旧工作流，但不会在节点中显示。
+- 每个 Plot 节点只输出一个 `XY_AXIS`；Model/Clip 起止值按每个 LoRA 行独立保存。
+  界面使用 `Model S/E`、`Clip S/E`，由 `axis` 隐藏不参与当前扫描的范围。
 
 目标 LoRA 在 Power Loader 中的状态：
 
@@ -65,12 +62,13 @@ Power Loader.LORA_PIPE → LoRA Sweep ED.lora_pipe
                      或 → LoRA Plot.lora_pipe
 
 LoRA Sweep ED.XY_AXIS → XY Plot.X 或 XY Plot.Y
-LoRA Plot.X / Y       → XY Plot.X / Y
+LoRA Plot.XY_AXIS     → XY Plot.X 或 XY Plot.Y（按 axis）
 Efficient Loader ED.DEPENDENCIES → XY Plot.dependencies
 XY Plot.SCRIPT → KSampler (Efficient) ED.script
 ```
 
-`LoRA Plot` 的 X 与 Y 都需要接到 `XY Plot`；通常 X 扫 Model Strength、Y 扫 Clip Strength。
+`LoRA Plot` 只需将 `XY_AXIS` 接到一个方向；需要二维图表时，另一个方向使用独立的
+Sweep 或 Plot 节点。
 
 ## 选择建议
 

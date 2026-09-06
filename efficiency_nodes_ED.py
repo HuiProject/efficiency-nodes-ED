@@ -3380,13 +3380,8 @@ class EDLoraSweep:
             "required": {
                 "lora_pipe": ("ED_LORA_PIPE",),
                 "batch_count": ("INT", {"default": 3, "min": 1, "max": 50, "step": 1}),
-                "axis": (axis_values, {"default": "X Model"}),
-                # Legacy single-target fields stay in the contract for saved
-                # workflows; the dynamic frontend hides them on screen.
-                "target_lora": (["None"] + folder_paths.get_filename_list("loras"),),
-                "first_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
-                "last_strength": ("FLOAT", {"default": 1.0, "min": -10.0, "max": 10.0, "step": 0.01}),
                 "lora_count": ("INT", {"default": 1, "min": 0, "max": cls.MAX_SCAN_LORAS, "step": 1}),
+                "axis": (axis_values, {"default": "X Model"}),
             },
             # Dynamic row widgets are optional wildcard inputs. They are not
             # part of INPUT_TYPES until the user creates the corresponding UI
@@ -3400,8 +3395,7 @@ class EDLoraSweep:
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
-    def build_plan(self, lora_pipe, batch_count, axis="X Model", lora_count=0,
-                   target_lora=None, first_strength=1.0, last_strength=1.0,
+    def build_plan(self, lora_pipe, batch_count, lora_count=0, axis="X Model",
                    script=None, **kwargs):
         rows = []
         # Stacker-style dynamic rows are the canonical contract. Only the
@@ -3409,47 +3403,21 @@ class EDLoraSweep:
         count, rows = normalize_sweep_rows(lora_count, kwargs, self.MAX_SCAN_LORAS)
         print(f"[XY-ED-STACKER] count={count}, enabled_rows={rows}")
 
-        # Compatibility with pre-stacker workflows that submitted dynamic row
-        # dictionaries or a single target field.
+        # Dynamic rows are the only supported source of targets.  Keeping one
+        # canonical shape prevents stale single-target fields from reappearing
+        # in the frontend and makes lora_count authoritative.
         if not rows:
-            dynamic_names = {}
             for key, value in kwargs.items():
-                if key.startswith("scan_lora_name_"):
-                    suffix = key.rsplit("_", 1)[-1]
-                    dynamic_names[suffix] = [
-                        value,
-                        kwargs.get(f"scan_lora_{suffix}_toggle", True),
-                        kwargs.get(f"scan_lora_first_strength_{suffix}", 1.0),
-                        kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0),
-                        kwargs.get(
-                            f"scan_lora_clip_first_strength_{suffix}",
-                            kwargs.get(f"scan_lora_y_first_strength_{suffix}",
-                                       kwargs.get(f"scan_lora_first_strength_{suffix}", 1.0)),
-                        ),
-                        kwargs.get(
-                            f"scan_lora_clip_last_strength_{suffix}",
-                            kwargs.get(f"scan_lora_y_last_strength_{suffix}",
-                                       kwargs.get(f"scan_lora_last_strength_{suffix}", 1.0)),
-                        ),
-                    ]
-                if key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict):
-                    if value.get("on", True) and value.get("lora") not in (None, "None"):
-                        first = float(value.get("first_strength", 1.0))
-                        last = float(value.get("last_strength", 1.0))
-                        rows.append((
-                            value["lora"], first, last,
-                            float(value.get("clip_first_strength", first)),
-                            float(value.get("clip_last_strength", last)),
-                        ))
-            for name, toggle, first, last, clip_first, clip_last in dynamic_names.values():
-                if toggle and name not in (None, "None"):
-                    rows.append((name, float(first), float(last),
-                                 float(clip_first), float(clip_last)))
-        # Backward-compatible fixed-field parsing for saved pre-dynamic nodes.
-        if not rows:
-            if target_lora:
-                rows = [(target_lora, float(first_strength), float(last_strength),
-                         float(first_strength), float(last_strength))]
+                if not (key.startswith("scan_lora_") and key.endswith("_row") and isinstance(value, dict)):
+                    continue
+                if value.get("on", True) and value.get("lora") not in (None, "None"):
+                    first = float(value.get("first_strength", 1.0))
+                    last = float(value.get("last_strength", 1.0))
+                    rows.append((
+                        value["lora"], first, last,
+                        float(value.get("clip_first_strength", first)),
+                        float(value.get("clip_last_strength", last)),
+                    ))
         if not rows:
             raise ValueError("LoRA Sweep 至少需要 lora_count 个已启用的 LoRA 行")
         values = generate_sweep_values(batch_count, 0.0, 1.0)
