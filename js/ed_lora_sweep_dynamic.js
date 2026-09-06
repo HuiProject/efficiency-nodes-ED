@@ -300,7 +300,7 @@ function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
     first.draw = function(ctx, graphNode, width, y, height) {
         const h = height || LiteGraph.NODE_WIDGET_HEIGHT;
         const margin = 15;
-        const frame = Number(graphNode?.size?.[0]) || Number(width) || 220;
+        const frame = Number(graphNode?.size?.[0]) || 220;
         const total = Math.max(80, frame - margin * 2);
         const gap = 5;
         const half = Math.max(38, (total - gap) / 2);
@@ -337,23 +337,39 @@ function pairRangeWidgets(node, first, last, labelFirst, labelLast) {
         const total = Math.max(80, frame - margin * 2);
         const gap = 5;
         const half = Math.max(38, (total - gap) / 2);
-        const relative = Number(pos?.[0] ?? 0) - margin;
+        const rawX = Number(pos?.[0] ?? 0);
+        const canvasX = Number(event?.canvasX);
+        const nodeX = Number(graphNode?.pos?.[0]);
+        const hitX = Number.isFinite(rawX) && rawX >= 0 && rawX <= frame
+            ? rawX
+            : (Number.isFinite(canvasX) && Number.isFinite(nodeX) ? canvasX - nodeX : rawX);
+        const relative = hitX - margin;
         const side = relative > half + gap ? 1 : 0;
-        const localX = side ? relative - half - gap : relative;
+        const sideX = side ? relative - half - gap : relative;
         const target = side ? pair.end : this;
         if (!target) return true;
         const current = Number(target.value ?? 0);
-        if (localX <= 18) {
+        if (sideX <= 18) {
             target.value = clampRangeValue(target, Math.round((current - 0.05) * 100) / 100);
-        } else if (localX >= half - 18) {
+        } else if (sideX >= half - 18) {
             target.value = clampRangeValue(target, Math.round((current + 0.05) * 100) / 100);
         } else {
             app.canvas?.prompt?.("Value", current, value => {
                 const parsed = Number(value);
-                if (Number.isFinite(parsed)) target.value = clampRangeValue(target, parsed);
+                if (Number.isFinite(parsed)) {
+                    target.value = clampRangeValue(target, parsed);
+                    target.callback?.(target.value);
+                    console.debug("[ED-UI] Sweep range changed", {
+                        node: graphNode?.id, field: target.name, value: target.value,
+                    });
+                }
                 graphNode.setDirtyCanvas(true, true);
             }, event);
         }
+        target.callback?.(target.value);
+        console.debug("[ED-UI] Sweep range changed", {
+            node: graphNode?.id, field: target.name, value: target.value,
+        });
         graphNode.setDirtyCanvas(true, true);
         return true;
     };

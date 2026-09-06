@@ -38,13 +38,13 @@ class TestEDLoraPlot(unittest.TestCase):
         self.assertEqual(x_clip[0], "ED_LORA_SWEEP_X")
         self.assertEqual(len(x_clip[1]), 2)
         self.assertEqual(x_clip[1][0].overrides["anima\\first.safetensors"],
-                         ("Anima\\first.safetensors", None, 0.2))
+                         ("Anima\\first.safetensors", None, 0.3))
 
         y_model, = LegacyXYLoraPlotED().xy_value(axis="Y Model", **common)
         self.assertEqual(y_model[0], "ED_LORA_SWEEP_Y")
         self.assertEqual(len(y_model[1]), 2)
         self.assertEqual(y_model[1][-1].overrides["anima\\first.safetensors"],
-                         ("Anima\\first.safetensors", 0.7, None))
+                         ("Anima\\first.safetensors", 0.8, None))
 
     def test_two_selected_loras_build_second_layer_model_and_clip_axes(self):
         x_axis, = LegacyXYLoraPlotED().xy_value(

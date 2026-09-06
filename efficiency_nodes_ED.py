@@ -2308,6 +2308,8 @@ class KSampler_ED():
                 # resolved list, otherwise X/Y composition loses the target.
                 xv = x_axis.value if isinstance(x_axis, EDLoraAxisValue) else x_axis
                 yv = y_axis.value if isinstance(y_axis, EDLoraAxisValue) else y_axis
+                sweep_fingerprint = None
+                overlay_fingerprint = None
                 if isinstance(x_axis, LegacyOverlayAxisValue) or isinstance(y_axis, LegacyOverlayAxisValue):
                     # Historical LoRA Plot semantics: Power Loader has already
                     # applied its stack to context.model/clip.  Apply only the
@@ -2335,11 +2337,40 @@ class KSampler_ED():
                             default_model if model_value is None else model_value,
                             default_clip if clip_value is None else clip_value,
                         ))
-                    base_model = applied_model or pipe.applied_model or pipe.base_model
-                    base_clip = applied_clip or pipe.applied_clip or pipe.base_clip
+                    # A Plot axis is a deliberate second-layer overlay, but a
+                    # mixed grid may also contain a normal ED Sweep axis. In
+                    # that case rebuild the immutable Power Loader stack with
+                    # the Sweep override first, then apply Plot's duplicate
+                    # layer on top of that cell. The previous branch ignored
+                    # ED axes entirely, making whichever Sweep direction was
+                    # connected appear unchanged.
+                    sweep_axes = [axis for axis in (x_axis, y_axis)
+                                  if isinstance(axis, EDLoraAxisValue)]
+                    if sweep_axes:
+                        sweep_x = x_axis if isinstance(x_axis, EDLoraAxisValue) else None
+                        sweep_y = y_axis if isinstance(y_axis, EDLoraAxisValue) else None
+                        sweep_stack = combine_sweep_stacks(
+                            pipe, getattr(sweep_x, "plan", None),
+                            sweep_x.value if sweep_x is not None else None,
+                            getattr(sweep_y, "plan", None),
+                            sweep_y.value if sweep_y is not None else None,
+                        )
+                        base_model, base_clip = ED_Util.apply_load_lora(
+                            sweep_stack, pipe.base_model, pipe.base_clip,
+                            f"ED Mixed XY Sweep [{yi},{xi}]",
+                        )
+                        sweep_fingerprint = stack_fingerprint(sweep_stack)
+                        print(
+                            f"[XY-ED-V2] mixed sweep cell=({yi},{xi}) "
+                            f"stack={sweep_fingerprint}"
+                        )
+                    else:
+                        base_model = applied_model or pipe.applied_model or pipe.base_model
+                        base_clip = applied_clip or pipe.applied_clip or pipe.base_clip
                     if base_model is None or base_clip is None:
                         raise ValueError("ED legacy LoRA Plot overlay requires applied MODEL/CLIP in context")
                     final_stack = overlay_stack
+                    overlay_fingerprint = stack_fingerprint(final_stack)
                     if final_stack:
                         cell_model, cell_clip = ED_Util.apply_load_lora(
                             final_stack, base_model, base_clip,
@@ -2351,7 +2382,6 @@ class KSampler_ED():
                         # helper expects at least one tuple.
                         cell_model, cell_clip = base_model, base_clip
                         print(f"[XY-ED-PLOT] baseline cell=({yi},{xi}) overlay_count=0")
-                    final_fingerprint = stack_fingerprint(final_stack)
                 elif isinstance(x_axis, XYLoraAxisValue) or isinstance(y_axis, XYLoraAxisValue):
                     # Compatibility values already contain partial stack
                     # intent. Apply both axes to one immutable Power Loader
@@ -2391,6 +2421,8 @@ class KSampler_ED():
                     f"[XY-ED-V2] cell=({yi},{xi}) x={getattr(x_axis, 'label', xv)} "
                     f"y={getattr(y_axis, 'label', yv)} stack={stack_fingerprint(final_stack)} "
                     f"mode={'legacy-overlay' if legacy_overlay_mode else 'immutable'}"
+                    + (f" sweep_stack={sweep_fingerprint}" if sweep_fingerprint else "")
+                    + (f" overlay_stack={overlay_fingerprint}" if overlay_fingerprint else "")
                 )
         x_labels = [_compact_lora_label(axis.label) if axis else "X" for axis in x_axes]
         y_labels = [_compact_lora_label(axis.label) if axis else "Y" for axis in y_axes]

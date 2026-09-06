@@ -246,7 +246,11 @@ class LegacyXYLoraPlotED:
             return LegacyOverlayAxisValue(entries, ", ".join(labels))
 
         axis_type = "ED_LORA_SWEEP_X" if axis_direction == "X" else "ED_LORA_SWEEP_Y"
-        range_axis = "x" if axis_direction == "X" else "y"
+        # The two visible pairs are weight fields, not directions: Model is
+        # always the x-range pair and CLIP is always the y-range pair. The
+        # direction only decides whether this one axis is emitted to XY Plot.X
+        # or XY Plot.Y.
+        range_axis = "x" if axis_mode == "model" else "y"
         axis_values = [overlay_values(position, range_axis, axis_mode) for position in positions]
         print(
             f"[ED-XY-PLOT] stack count={len(base_stack)} "
