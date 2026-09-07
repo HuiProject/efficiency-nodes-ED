@@ -1913,17 +1913,25 @@ def _render_ed_xy_grid(images, x_labels, y_labels, grid_spacing=0):
 
 
 def _compact_lora_label(label):
-    """Keep only a LoRA basename and its strength in an XY label."""
-    text = str(label)
-    if "=" not in text:
-        return text
-    name, strength = text.rsplit("=", 1)
-    name = name.replace("/", "\\").rsplit("\\", 1)[-1]
-    for extension in (".safetensors", ".ckpt", ".pt"):
-        if name.casefold().endswith(extension):
-            name = name[:-len(extension)]
-            break
-    return f"{name}={strength}"
+    """Compact every LoRA name in an XY label without losing its strength.
+
+    A multi-LoRA axis contains several ``path\\name.safetensors MStr=...``
+    fragments.  The old implementation split only on the final ``=``, which
+    compacted one fragment at most and left extensions on all preceding names.
+    Normalize each fragment independently so Plot and Sweep labels agree.
+    """
+    text = str(label).replace("/", "\\")
+    extensions = r"(?:safetensors|ckpt|pt)"
+    # First remove one or more folder segments, then remove a remaining
+    # extension-only filename.  The lookahead preserves the MStr/CStr text.
+    text = re.sub(
+        rf"(?i)(?:[^\\\s,=]+\\)+([^\\\s,=]+?)\.{extensions}(?=\s|=|,|$)",
+        r"\1",
+        text,
+    )
+    return re.sub(
+        rf"(?i)([^\\\s,=]+?)\.{extensions}(?=\s|=|,|$)", r"\1", text
+    )
 
 
 def _lora_axis_label(axis, fallback):
@@ -1995,8 +2003,11 @@ class KSampler_ED():
                     },
                 "hidden": {"prompt": "PROMPT", "extra_pnginfo": "EXTRA_PNGINFO", "my_unique_id": "UNIQUE_ID",},}
 
-    RETURN_TYPES = ("RGTHREE_CONTEXT", "IMAGE", "INT",)
-    RETURN_NAMES = ("CONTEXT", "OUTPUT_IMAGE", "STEPS_INT",)
+    # Appending the plot keeps the first three historical output indexes
+    # stable.  A labeled grid has different dimensions from individual cells,
+    # so it cannot be merged into OUTPUT_IMAGE's IMAGE batch.
+    RETURN_TYPES = ("RGTHREE_CONTEXT", "IMAGE", "INT", "IMAGE",)
+    RETURN_NAMES = ("CONTEXT", "OUTPUT_IMAGE", "STEPS_INT", "XY_PLOT_IMAGE",)
     OUTPUT_NODE = True
     FUNCTION = "sample_ed"
     CATEGORY = "Efficiency Nodes/Sampling"
@@ -2047,7 +2058,7 @@ class KSampler_ED():
             )["ui"]
             set_preview_method(previous_preview_method)
             context = new_context_ed(context, latent=latent_list, images=output_images)
-            return {"ui": result_ui, "result": (context, output_images, steps)}
+            return {"ui": result_ui, "result": (context, output_images, steps, output_images)}
 
         # XY Plot bridge: two ED sweep axes are combined here, from the same
         # immutable Power Loader pipe, so each cell applies both LoRAs exactly once.
@@ -2056,23 +2067,25 @@ class KSampler_ED():
             x_type, x_values, y_type, y_values = xy[:4]
             ed_types = {"ED_LORA_SWEEP_X", "ED_LORA_SWEEP_Y"}
             if x_type in ed_types or y_type in ed_types:
-                output_images, latent_list, extra_images = self.sample_lora_xy_grid_v2(
+                output_images, latent_list, plot_image = self.sample_lora_xy_grid_v2(
                     context, xy, vae, latent_image, seed, steps, cfg, sampler_name,
                     scheduler, denoise, properties['tiled_vae'],
                 )
+                extra_images = plot_image if _xy_output_mode(xy[7] if len(xy) > 7 else True) == "Plot+Image" else None
                 result_ui = _save_xy_ui(output_images, extra_images, prompt, extra_pnginfo)
                 set_preview_method(previous_preview_method)
                 context = new_context_ed(context, latent=latent_list, images=output_images)
-                return {"ui": result_ui, "result": (context, output_images, steps)}
+                return {"ui": result_ui, "result": (context, output_images, steps, plot_image)}
             if x_type != "Nothing" or y_type != "Nothing":
-                output_images, latent_list, extra_images = self.sample_xy_grid_basic(
+                output_images, latent_list, plot_image = self.sample_xy_grid_basic(
                     context, xy, vae, latent_image, seed, steps, cfg,
                     sampler_name, scheduler, denoise, properties['tiled_vae'],
                 )
+                extra_images = plot_image if _xy_output_mode(xy[7] if len(xy) > 7 else True) == "Plot+Image" else None
                 result_ui = _save_xy_ui(output_images, extra_images, prompt, extra_pnginfo)
                 set_preview_method(previous_preview_method)
                 context = new_context_ed(context, latent=latent_list, images=output_images)
-                return {"ui": result_ui, "result": (context, output_images, steps)}
+                return {"ui": result_ui, "result": (context, output_images, steps, plot_image)}
         
         if do_refine_only:
             latent_list = ED_Util.vae_encode(vae, optional_image, properties['tiled_vae'])
@@ -2117,7 +2130,7 @@ class KSampler_ED():
         set_preview_method(previous_preview_method)
         context = new_context_ed(context, latent=latent_list or latent_image, images=output_images)
 
-        return {"ui": result_ui, "result": (context, output_images, steps)}
+        return {"ui": result_ui, "result": (context, output_images, steps, output_images)}
 
     # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
     @staticmethod
@@ -2205,8 +2218,8 @@ class KSampler_ED():
         batch_images = torch.cat(images, dim=0)
         output_mode = _xy_output_mode(xy[7] if len(xy) > 7 else True)
         primary = pil2tensor(grid) if output_mode == "Plot" else batch_images
-        extra = pil2tensor(grid) if output_mode == "Plot+Image" else None
-        return primary, latent_batch, extra
+        plot_image = pil2tensor(grid)
+        return primary, latent_batch, plot_image
 
     # <2> 用 ED 的模型加载与提示词编码路径执行每个 LoRA 扫描单元。
     @staticmethod
@@ -2466,8 +2479,8 @@ class KSampler_ED():
         batch_images = torch.cat(images, dim=0)
         output_mode = _xy_output_mode(xy[7] if len(xy) > 7 else True)
         primary = pil2tensor(grid) if output_mode == "Plot" else batch_images
-        extra = pil2tensor(grid) if output_mode == "Plot+Image" else None
-        return primary, latent_batch, extra
+        plot_image = pil2tensor(grid)
+        return primary, latent_batch, plot_image
 
     @staticmethod
     def is_positive_changed(positive, positive_opt):

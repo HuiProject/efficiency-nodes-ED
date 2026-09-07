@@ -9,7 +9,8 @@
 - `XY Input: LoRA Plot (Legacy Overlay)`：在 Power Loader 已应用结果上再次叠加目标 LoRA，保留旧版后加载效果。
 
 图表中的 LoRA 标签会在文件名之前标出来源，例如 `Sweep: shiny-skin MStr=0.5` 或
-`Plot: shiny-skin MStr=0.5`；目录和模型扩展名会省略。
+`Plot: shiny-skin MStr=0.5`；每个 LoRA 名称都会省略目录及
+`.safetensors`、`.ckpt`、`.pt` 等模型扩展名，即使同一轴同时扫描多个 LoRA 也是如此。
 
 | 节点 | 核心用途 | 每个格子的模型来源 | 与普通 Power Loader 的关系 |
 |---|---|---|---|
@@ -72,7 +73,9 @@
 - `ksampler_output_image`：采样器输出模式：
   - `Images`：输出各网格单元组成的图像批次。
   - `Plot`：输出带 X/Y 标签的合成图表。
-  - `Plot+Image`：界面同时保存合成图表和单元图像；节点下游的 IMAGE 输出为单元图像批次。
+  - `Plot+Image`：界面同时预览合成图表和单元图像；`OUTPUT_IMAGE` 仍是单元图像批次，
+    `XY_PLOT_IMAGE` 是单独的合成图表。图表尺寸通常大于单元图，不能放进同一 IMAGE 批次；
+    要持久保存两者，分别将两个输出接到各自的保存节点。
 
 ## 基本连线
 
@@ -85,6 +88,9 @@ LoRA Sweep ED.XY_AXIS → XY Plot.X 或 XY Plot.Y
 LoRA Plot.XY_AXIS     → XY Plot.X 或 XY Plot.Y（按 axis）
 Efficient Loader ED.DEPENDENCIES → XY Plot.dependencies
 XY Plot.SCRIPT → KSampler (Efficient) ED.script
+
+KSampler (Efficient) ED.OUTPUT_IMAGE  → Image Save（保存单元图像）
+KSampler (Efficient) ED.XY_PLOT_IMAGE → Image Save（保存带标签图表）
 ```
 
 `LoRA Plot` 只需将 `XY_AXIS` 接到一个方向；需要二维图表时，另一个方向使用独立的
