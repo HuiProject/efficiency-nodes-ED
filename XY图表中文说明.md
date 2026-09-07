@@ -17,6 +17,11 @@ LoRA 行，按节点行顺序省略目录和模型扩展名后以 ` + ` 连接�
 `shiny-skin + style_makeup`。可将它接到文本预览节点或支持 `STRING` 文件名前缀的保存节点；
 原有 `XY_AXIS`、`SCRIPT`、`XY_LORA_PLAN` 输出索引没有变化。
 
+若扫描节点保留在工作流中但所有扫描行已关闭、未选择，或保存后目标已不在 Power Loader 的
+启用栈中，它会安全退化为 `Nothing` XY 轴：Sweep 的 `SCRIPT` 原样透传，`LORA_NAMES` 为空。
+因此可保留文件名/预览连线并正常生成基础单图，不会因被忽略的 XY 分支中断整个队列；日志会以
+`[XY-ED-V2] inactive` 或 `[ED-XY-PLOT] inactive` 说明原因。
+
 | 节点 | 核心用途 | 每个格子的模型来源 | 与普通 Power Loader 的关系 |
 |---|---|---|---|
 | `XY Input: LoRA Sweep 💬ED` | 正常、可比较的强度扫描 | 从未加载 LoRA 的基础模型重新构建完整堆栈 | 同一堆栈与强度时，应与普通 Power Loader 一致 |

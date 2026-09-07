@@ -120,6 +120,14 @@ class TestEDLoraPlot(unittest.TestCase):
         self.assertEqual(x_axis[1][0].overrides["anima\\overlay-only.safetensors"],
                          ("Anima\\overlay-only.safetensors", 1.0, None))
 
+    def test_no_enabled_rows_are_a_safe_nothing_axis(self):
+        axis, lora_names = LegacyXYLoraPlotED().xy_value(
+            lora_count=1, batch_count=2, axis="X Model", lora_pipe=self.pipe,
+            scan_lora_name_1=self.stack[0][0], scan_lora_1_toggle=False,
+        )
+        self.assertEqual(axis, ("Nothing", [""]))
+        self.assertEqual(lora_names, "")
+
     def test_legacy_overlay_axis_has_no_sweep_plan(self):
         """The sampler must not require .plan before the overlay branch."""
         overlay = LegacyOverlayAxisValue([
@@ -127,15 +135,16 @@ class TestEDLoraPlot(unittest.TestCase):
         ])
         self.assertIsNone(get_axis_plan(overlay))
 
-    def test_target_must_be_in_connected_stack(self):
-        with self.assertRaises(ValueError):
-            LegacyXYLoraPlotED().xy_value(
-                lora_count=1,
-                batch_count=2, axis="X Model",
-                lora_pipe=self.pipe,
-                scan_lora_name_1="loras\\not-in-stack.safetensors",
-                scan_lora_1_toggle=True,
-            )
+    def test_missing_target_is_a_safe_nothing_axis(self):
+        axis, lora_names = LegacyXYLoraPlotED().xy_value(
+            lora_count=1,
+            batch_count=2, axis="X Model",
+            lora_pipe=self.pipe,
+            scan_lora_name_1="loras\\not-in-stack.safetensors",
+            scan_lora_1_toggle=True,
+        )
+        self.assertEqual(axis, ("Nothing", [""]))
+        self.assertEqual(lora_names, "")
 
 
 if __name__ == "__main__":

@@ -33,13 +33,13 @@ try:
     from .xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
         generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
-        normalize_sweep_axis, format_lora_names,
+        normalize_sweep_axis, normalize_name, format_lora_names,
     )
 except ImportError:
     from xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
         generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
-        normalize_sweep_axis, format_lora_names,
+        normalize_sweep_axis, normalize_name, format_lora_names,
     )
 try:
     from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, get_axis_plan, merge_partial_stack
@@ -3501,8 +3501,36 @@ class EDLoraSweep:
                         float(value.get("clip_first_strength", first)),
                         float(value.get("clip_last_strength", last)),
                     ))
+        # An XY input may intentionally remain in a workflow only to expose
+        # its optional STRING output.  Treat no enabled rows as a real
+        # pass-through, not as a graph-wide error: the ordinary sampler then
+        # keeps producing its baseline single image.
         if not rows:
-            raise ValueError("LoRA Sweep 至少需要 lora_count 个已启用的 LoRA 行")
+            print(
+                f"[XY-ED-V2] inactive axis={axis}: no enabled LoRA rows; "
+                "passing through SCRIPT and emitting a Nothing XY axis"
+            )
+            return (dict(script or {}), None, ("Nothing", [""]), "")
+
+        # A Power Loader keeps switched-off rows outside its applied stack.
+        # Sweep must not turn a stale/disabled selection into a hard failure:
+        # discard it as an inactive row.  This is especially important when a
+        # workflow saves LORA_NAMES while intentionally bypassing XY sampling.
+        active_keys = {normalize_name(item[0]) for item in getattr(lora_pipe, "stack", [])}
+        available_rows = [row for row in rows if normalize_name(row[0]) in active_keys]
+        skipped_rows = [row[0] for row in rows if normalize_name(row[0]) not in active_keys]
+        if skipped_rows:
+            print(
+                f"[XY-ED-V2] inactive targets skipped (not enabled in Power Loader): "
+                f"{skipped_rows}"
+            )
+        if not available_rows:
+            print(
+                f"[XY-ED-V2] inactive axis={axis}: no scan targets remain; "
+                "passing through SCRIPT and emitting a Nothing XY axis"
+            )
+            return (dict(script or {}), None, ("Nothing", [""]), "")
+        rows = available_rows
         values = generate_sweep_values(batch_count, 0.0, 1.0)
         axis_name, axis_direction, axis_mode = normalize_sweep_axis(axis)
         plan = EDLoraSweepPlan(

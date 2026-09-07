@@ -211,18 +211,31 @@ class LegacyXYLoraPlotED:
                  lora_stack=None, lora_pipe=None, **kwargs):
         batch_count = max(1, min(int(batch_count), XYPLOT_LIM))
         base_stack = _stack_from_inputs(lora_stack, lora_pipe)
-        if not base_stack:
-            raise ValueError("ED LoRA Plot requires a connected Power Loader ED LORA_PIPE/LORA_STACK")
 
         _, rows = normalize_plot_range_rows(
             lora_count, kwargs, 1.0, 1.0, 1.0, 1.0, self.MAX_SCAN_LORAS,
         )
         names = [row[0] for row in rows]
         if not rows:
-            raise ValueError("ED LoRA Plot 至少需要一个已启用的 LoRA 行")
+            print(
+                f"[ED-XY-PLOT] inactive axis={axis}: no enabled LoRA rows; "
+                "emitting a Nothing XY axis"
+            )
+            return (("Nothing", [""]), "")
+        # An empty applied stack is valid when the selected overlay LoRA is a
+        # switched-off Power Loader row: lora_pipe.available_loras still owns
+        # the row metadata.  Without either pipe or stack, this node is simply
+        # an inactive optional branch rather than a fatal workflow error.
+        if lora_pipe is None and not base_stack:
+            print(
+                f"[ED-XY-PLOT] inactive axis={axis}: no connected Power Loader; "
+                "emitting a Nothing XY axis"
+            )
+            return (("Nothing", [""]), "")
         error = _validate_plot_targets(names, base_stack, lora_pipe)
         if error:
-            raise ValueError(error)
+            print(f"[ED-XY-PLOT] inactive axis={axis}: {error}")
+            return (("Nothing", [""]), "")
 
         axis_name, axis_direction, axis_mode = normalize_sweep_axis(axis)
         positions = generate_sweep_values(batch_count, 0.0, 1.0)
@@ -268,8 +281,10 @@ class LegacyXYLoraPlotED:
         base_stack = _stack_from_inputs(lora_stack, lora_pipe)
         _, names = normalize_plot_rows(lora_count, kwargs, cls.MAX_SCAN_LORAS)
         if not names:
-            return "ED LoRA Plot requires at least one enabled LoRA row"
-        return _validate_plot_targets(names, base_stack, lora_pipe) or True
+            return True
+        # ``xy_value`` deliberately degrades missing/stale selections to a
+        # Nothing axis, so validation must not pre-empt that safe no-op path.
+        return True
 
 
 class LegacyXYAestheticScoreED:

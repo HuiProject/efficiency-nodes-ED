@@ -27,6 +27,15 @@ class TestEDXYPlot(unittest.TestCase):
             "Nothing", [""], "ED_LORA_SWEEP_X", ["x"],
         ))
 
+    def test_two_inactive_lora_axes_remain_a_valid_baseline_script(self):
+        script = compose_xyplot_script(
+            0, "False", "Vertical", "False", "Images", "42",
+            X=("Nothing", [""]), Y=("Nothing", [""]),
+        )
+        self.assertEqual(script["xyplot"][0:4], (
+            "Nothing", [""], "Nothing", [""],
+        ))
+
     def test_legacy_encoded_axis_requires_dependencies(self):
         script = compose_xyplot_script(
             0, "False", "Vertical", "False", "Images", "42",

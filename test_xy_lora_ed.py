@@ -4,6 +4,7 @@ from xy_lora_ed import (EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue,
                          combine_sweep_stacks, generate_sweep_values,
                          stack_fingerprint, normalize_sweep_rows,
                          normalize_sweep_axis, format_lora_names)
+from efficiency_nodes_ED import EDLoraSweep
 
 
 class TestEDLoraSweep(unittest.TestCase):
@@ -184,6 +185,15 @@ class TestEDLoraSweep(unittest.TestCase):
         })
         self.assertEqual(count, 3)
         self.assertEqual(rows, [("Anima\\last.safetensors", 1.0, 1.0, 1.0, 1.0)])
+
+    def test_disabled_or_missing_sweep_rows_are_a_safe_noop(self):
+        result = EDLoraSweep().build_plan(
+            self.pipe, batch_count=3, lora_count=2, axis="X Model",
+            script={"keep": "baseline"},
+            scan_lora_name_1="Anima\\first.safetensors", scan_lora_1_toggle=False,
+            scan_lora_name_2="Anima\\disabled.safetensors", scan_lora_2_toggle=True,
+        )
+        self.assertEqual(result, ({"keep": "baseline"}, None, ("Nothing", [""]), ""))
 
     def test_normalize_rows_reads_independent_clip_range_and_alias(self):
         _, rows = normalize_sweep_rows(2, {

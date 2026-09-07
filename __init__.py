@@ -27,6 +27,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     # distinct LoRA loading semantics visible in the node search/canvas.
     "XY Input: LoRA Sweep 💬ED": "XY Input: LoRA Sweep (ED)",
     "XY Input: LoRA Plot": "XY Input: LoRA Plot (Legacy Overlay)",
+    "Power Lora Loader 💬ED (LORA_STACK)": "Power Lora Loader ED (LORA_STACK)",
     "XY Plot": "XY Plot (ED)",
 }
 
