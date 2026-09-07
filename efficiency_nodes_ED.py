@@ -33,13 +33,13 @@ try:
     from .xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
         generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
-        normalize_sweep_axis,
+        normalize_sweep_axis, format_lora_names,
     )
 except ImportError:
     from xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue, combine_sweep_stacks,
         generate_sweep_values, stack_fingerprint, normalize_sweep_rows,
-        normalize_sweep_axis,
+        normalize_sweep_axis, format_lora_names,
     )
 try:
     from .xy_lora_compat import XYLoraAxisValue, LegacyOverlayAxisValue, get_axis_plan, merge_partial_stack
@@ -3471,8 +3471,10 @@ class EDLoraSweep:
         }
         return inputs
 
-    RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN", "XY")
-    RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN", "XY_AXIS")
+    # Appending LORA_NAMES preserves the indexes of the three historical
+    # execution outputs used by existing XY workflows.
+    RETURN_TYPES = ("SCRIPT", "ED_XY_LORA_PLAN", "XY", "STRING")
+    RETURN_NAMES = ("SCRIPT", "XY_LORA_PLAN", "XY_AXIS", "LORA_NAMES")
     FUNCTION = "build_plan"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
@@ -3521,8 +3523,13 @@ class EDLoraSweep:
         )
         axis_type = "ED_LORA_SWEEP_X" if axis_direction == "X" else "ED_LORA_SWEEP_Y"
         axis = (axis_type, plan.axis_values())
-        print(f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, normalized_values={values}, resolved_values={resolved_values}")
-        return (result, plan, axis)
+        lora_names = format_lora_names(item[0] for item in rows)
+        print(
+            f"[XY-ED-V2] axis={axis_type}, target={plan.target_name}, "
+            f"normalized_values={values}, resolved_values={resolved_values}, "
+            f"lora_names={lora_names}"
+        )
+        return (result, plan, axis, lora_names)
 
 NODE_CLASS_MAPPINGS = {
     #ED

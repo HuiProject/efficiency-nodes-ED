@@ -12,6 +12,11 @@
 `Plot: shiny-skin MStr=0.5`；每个 LoRA 名称都会省略目录及
 `.safetensors`、`.ckpt`、`.pt` 等模型扩展名，即使同一轴同时扫描多个 LoRA 也是如此。
 
+两种 LoRA 输入节点还都提供末尾的 `LORA_NAMES` 文本输出。它只包含当前**已启用**的
+LoRA 行，按节点行顺序省略目录和模型扩展名后以 ` + ` 连接，例如
+`shiny-skin + style_makeup`。可将它接到文本预览节点或支持 `STRING` 文件名前缀的保存节点；
+原有 `XY_AXIS`、`SCRIPT`、`XY_LORA_PLAN` 输出索引没有变化。
+
 | 节点 | 核心用途 | 每个格子的模型来源 | 与普通 Power Loader 的关系 |
 |---|---|---|---|
 | `XY Input: LoRA Sweep 💬ED` | 正常、可比较的强度扫描 | 从未加载 LoRA 的基础模型重新构建完整堆栈 | 同一堆栈与强度时，应与普通 Power Loader 一致 |

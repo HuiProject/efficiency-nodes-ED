@@ -23,8 +23,8 @@ class TestEDLoraPlot(unittest.TestCase):
         self.assertNotIn("X_batch_count", names)
         self.assertNotIn("Y_batch_count", names)
         self.assertIn("axis", names)
-        self.assertEqual(LegacyXYLoraPlotED.RETURN_TYPES, ("XY",))
-        self.assertEqual(LegacyXYLoraPlotED.RETURN_NAMES, ("XY_AXIS",))
+        self.assertEqual(LegacyXYLoraPlotED.RETURN_TYPES, ("XY", "STRING"))
+        self.assertEqual(LegacyXYLoraPlotED.RETURN_NAMES, ("XY_AXIS", "LORA_NAMES"))
 
     def test_axis_modes_select_one_direction_and_weight_field(self):
         common = dict(
@@ -34,20 +34,22 @@ class TestEDLoraPlot(unittest.TestCase):
             scan_lora_x_first_strength_1=0.2, scan_lora_x_last_strength_1=0.8,
             scan_lora_y_first_strength_1=0.3, scan_lora_y_last_strength_1=0.7,
         )
-        x_clip, = LegacyXYLoraPlotED().xy_value(axis="X Clip", **common)
+        x_clip, x_clip_names = LegacyXYLoraPlotED().xy_value(axis="X Clip", **common)
+        self.assertEqual(x_clip_names, "first")
         self.assertEqual(x_clip[0], "ED_LORA_SWEEP_X")
         self.assertEqual(len(x_clip[1]), 2)
         self.assertEqual(x_clip[1][0].overrides["anima\\first.safetensors"],
                          ("Anima\\first.safetensors", None, 0.3))
 
-        y_model, = LegacyXYLoraPlotED().xy_value(axis="Y Model", **common)
+        y_model, y_model_names = LegacyXYLoraPlotED().xy_value(axis="Y Model", **common)
+        self.assertEqual(y_model_names, "first")
         self.assertEqual(y_model[0], "ED_LORA_SWEEP_Y")
         self.assertEqual(len(y_model[1]), 2)
         self.assertEqual(y_model[1][-1].overrides["anima\\first.safetensors"],
                          ("Anima\\first.safetensors", 0.8, None))
 
     def test_two_selected_loras_build_second_layer_model_and_clip_axes(self):
-        x_axis, = LegacyXYLoraPlotED().xy_value(
+        x_axis, names = LegacyXYLoraPlotED().xy_value(
             lora_count=2,
             batch_count=2, axis="X Model and Clip",
             lora_pipe=self.pipe,
@@ -58,6 +60,7 @@ class TestEDLoraPlot(unittest.TestCase):
             scan_lora_x_first_strength_2=0.4, scan_lora_x_last_strength_2=0.6,
             scan_lora_y_first_strength_2=0.3, scan_lora_y_last_strength_2=0.5,
         )
+        self.assertEqual(names, "first + second")
         self.assertEqual(x_axis[0], "ED_LORA_SWEEP_X")
         self.assertTrue(all(isinstance(value, LegacyOverlayAxisValue) for value in x_axis[1]))
         self.assertEqual(x_axis[1][0].overrides["anima\\first.safetensors"],
@@ -67,7 +70,7 @@ class TestEDLoraPlot(unittest.TestCase):
 
     def test_each_selected_lora_uses_its_own_x_and_y_ranges(self):
         """Plot keeps one grid shape while interpolating each row separately."""
-        x_axis, = LegacyXYLoraPlotED().xy_value(
+        x_axis, _ = LegacyXYLoraPlotED().xy_value(
             lora_count=2,
             batch_count=3, axis="X Model",
             lora_pipe=self.pipe,
@@ -95,7 +98,7 @@ class TestEDLoraPlot(unittest.TestCase):
                          ("Anima\\second.safetensors", 0.6, None))
 
     def test_model_and_clip_axes_are_retagged_for_legacy_overlay_sampler(self):
-        x_axis, = LegacyXYLoraPlotED().xy_value(
+        x_axis, _ = LegacyXYLoraPlotED().xy_value(
             lora_count=1,
             batch_count=1, axis="X Model",
             lora_pipe=self.pipe,
@@ -107,7 +110,7 @@ class TestEDLoraPlot(unittest.TestCase):
                          ("Anima\\first.safetensors", 0.4, None))
 
     def test_disabled_power_loader_row_can_be_selected_as_overlay(self):
-        x_axis, = LegacyXYLoraPlotED().xy_value(
+        x_axis, _ = LegacyXYLoraPlotED().xy_value(
             lora_count=1,
             batch_count=2, axis="X Model",
             lora_pipe=self.pipe,

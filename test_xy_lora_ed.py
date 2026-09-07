@@ -3,7 +3,7 @@ import unittest
 from xy_lora_ed import (EDLoraPipe, EDLoraSweepPlan, EDLoraAxisValue,
                          combine_sweep_stacks, generate_sweep_values,
                          stack_fingerprint, normalize_sweep_rows,
-                         normalize_sweep_axis)
+                         normalize_sweep_axis, format_lora_names)
 
 
 class TestEDLoraSweep(unittest.TestCase):
@@ -17,6 +17,19 @@ class TestEDLoraSweep(unittest.TestCase):
 
     def test_values_include_both_ends(self):
         self.assertEqual(generate_sweep_values(3, 0.5, 1.0), [0.5, 0.75, 1.0])
+
+    def test_format_lora_names_drops_path_and_model_extension(self):
+        self.assertEqual(
+            format_lora_names([
+                "Anima\\first.safetensors",
+                "Anima2\\Style\\second.ckpt",
+                "third.pt",
+                "animaColor20ghost20mixE9.qi6Z.safetensors",
+                "None",
+                "",
+            ]),
+            "first + second + third + animaColor20ghost20mixE9.qi6Z",
+        )
 
     def test_six_descriptive_axes_map_to_direction_and_field(self):
         self.assertEqual(normalize_sweep_axis("X Model"), ("X Model", "X", "model"))

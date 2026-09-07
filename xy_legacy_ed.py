@@ -19,6 +19,7 @@ try:
     from .xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
         normalize_plot_rows, normalize_plot_range_rows, normalize_sweep_axis,
+        format_lora_names,
     )
 except ImportError:  # pragma: no cover - direct development import
     from xy_inputs_ed import XYPLOT_DEF, XYPLOT_LIM, generate_floats
@@ -26,6 +27,7 @@ except ImportError:  # pragma: no cover - direct development import
     from xy_lora_ed import (
         EDLoraPipe, EDLoraSweepPlan, generate_sweep_values,
         normalize_plot_rows, normalize_plot_range_rows, normalize_sweep_axis,
+        format_lora_names,
     )
 
 
@@ -199,8 +201,9 @@ class LegacyXYLoraPlotED:
             "lora_stack": ("LORA_STACK",),
         })}
 
-    RETURN_TYPES = ("XY",)
-    RETURN_NAMES = ("XY_AXIS",)
+    # The appended string output leaves the historical XY output at index 0.
+    RETURN_TYPES = ("XY", "STRING")
+    RETURN_NAMES = ("XY_AXIS", "LORA_NAMES")
     FUNCTION = "xy_value"
     CATEGORY = "Efficiency Nodes/XY Inputs"
 
@@ -252,12 +255,13 @@ class LegacyXYLoraPlotED:
         # or XY Plot.Y.
         range_axis = "x" if axis_mode == "model" else "y"
         axis_values = [overlay_values(position, range_axis, axis_mode) for position in positions]
+        lora_names = format_lora_names(names)
         print(
             f"[ED-XY-PLOT] stack count={len(base_stack)} "
             f"rows={rows} mode=legacy-overlay axis={axis_name} "
-            f"values={[v.label for v in axis_values]}"
+            f"values={[v.label for v in axis_values]} lora_names={lora_names}"
         )
-        return ((axis_type, axis_values),)
+        return ((axis_type, axis_values), lora_names)
 
     @classmethod
     def VALIDATE_INPUTS(cls, batch_count=1, lora_count=0, lora_stack=None, lora_pipe=None, **kwargs):

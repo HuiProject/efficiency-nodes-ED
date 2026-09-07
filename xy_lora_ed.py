@@ -15,6 +15,30 @@ def normalize_name(name):
     return str(name).replace("/", "\\").casefold()
 
 
+def format_lora_names(names):
+    """Return display/file-name friendly names for active LoRA rows.
+
+    Keep the final filename stem intact (including meaningful dots inside a
+    name), while dropping only a known model-file extension and any parent
+    directory.  The order deliberately follows the node rows so a connected
+    string output describes the exact selection the node is executing.
+    """
+    model_extensions = (".safetensors", ".ckpt", ".pt", ".pth", ".bin", ".gguf")
+    compact_names = []
+    for name in names:
+        if name in (None, "", "None"):
+            continue
+        basename = str(name).replace("/", "\\").rsplit("\\", 1)[-1]
+        lowercase = basename.casefold()
+        for extension in model_extensions:
+            if lowercase.endswith(extension):
+                basename = basename[:-len(extension)]
+                break
+        if basename:
+            compact_names.append(basename)
+    return " + ".join(compact_names)
+
+
 def normalize_sweep_axis(axis):
     """Return ``(canonical_name, direction, field_mode)`` for Sweep axes.
 
