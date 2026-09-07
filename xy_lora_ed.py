@@ -145,6 +145,33 @@ class EDLoraPipe:
         ]
         self.fingerprint = stack_fingerprint(self.stack)
 
+    def with_disabled_sweep_targets(self, target_names):
+        """Return a plan-only pipe that can scan selected switched-off rows.
+
+        Power Loader intentionally excludes disabled rows from ``stack`` so
+        its ordinary MODEL/CLIP output stays untouched.  Sweep, however, can
+        explicitly select one of those known rows.  In that case append it to
+        a *new* immutable planning stack at ``0.0 / 0.0``; each XY cell then
+        replaces that zero baseline with its requested value.  Unknown names
+        are not added and remain safe no-op candidates at the node boundary.
+        """
+        stack = list(self.stack)
+        stack_keys = {normalize_name(item[0]) for item in stack}
+        available = {normalize_name(name): str(name) for name in self.available_loras}
+        added = []
+        for requested in target_names or []:
+            key = normalize_name(requested)
+            if key in stack_keys or key not in available:
+                continue
+            name = available[key]
+            stack.append((name, 0.0, 0.0))
+            stack_keys.add(key)
+            added.append(name)
+        return EDLoraPipe(
+            self.base_model, self.base_clip, self.applied_model, self.applied_clip,
+            stack, available_loras=self.available_loras,
+        ), added
+
 
 # <4> 保存一个目标 LoRA 的单轴扫描，不携带或修改模型对象。
 class EDLoraSweepPlan:

@@ -195,6 +195,26 @@ class TestEDLoraSweep(unittest.TestCase):
         )
         self.assertEqual(result, ({"keep": "baseline"}, None, ("Nothing", [""]), ""))
 
+    def test_disabled_power_loader_target_is_added_to_plan_at_zero_strength(self):
+        closed_name = "Anima\\closed.safetensors"
+        pipe = EDLoraPipe(
+            object(), object(), object(), object(), self.stack,
+            available_loras=[item[0] for item in self.stack] + [closed_name],
+        )
+        result = EDLoraSweep().build_plan(
+            pipe, batch_count=2, lora_count=1, axis="X Model",
+            scan_lora_name_1=closed_name, scan_lora_1_toggle=True,
+            scan_lora_first_strength_1=0.25,
+            scan_lora_last_strength_1=0.75,
+        )
+        script, plan, axis, lora_names = result
+        self.assertIs(script["ed_lora_sweep_v2"], plan)
+        self.assertEqual(lora_names, "closed")
+        self.assertEqual(plan.lora_pipe.stack[-1], (closed_name, 0.0, 0.0))
+        self.assertEqual(plan.stack_for_value(axis[1][0].value)[-1], (closed_name, 0.25, 0.0))
+        self.assertEqual(plan.stack_for_value(axis[1][1].value)[-1], (closed_name, 0.75, 0.0))
+        self.assertEqual(pipe.stack, self.stack)
+
     def test_normalize_rows_reads_independent_clip_range_and_alias(self):
         _, rows = normalize_sweep_rows(2, {
             "scan_lora_name_1": "Anima\\first.safetensors",

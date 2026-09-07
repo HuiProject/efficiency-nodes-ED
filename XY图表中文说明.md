@@ -1,6 +1,6 @@
 # ED XY LoRA 图表：Sweep 与 Plot
 
-两种节点都从 `Power Lora Loader 💬ED (LORA_STACK)` 读取 LoRA 选择列表，
+两种节点都从 `Power Lora Loader ED (LORA_STACK)` 读取 LoRA 选择列表，
 并通过 `XY Plot → KSampler (Efficient) 💬ED` 生成图表；它们的**加载蓝图不同**。
 
 节点显示名称现在区分为：
@@ -17,8 +17,8 @@ LoRA 行，按节点行顺序省略目录和模型扩展名后以 ` + ` 连接�
 `shiny-skin + style_makeup`。可将它接到文本预览节点或支持 `STRING` 文件名前缀的保存节点；
 原有 `XY_AXIS`、`SCRIPT`、`XY_LORA_PLAN` 输出索引没有变化。
 
-若扫描节点保留在工作流中但所有扫描行已关闭、未选择，或保存后目标已不在 Power Loader 的
-启用栈中，它会安全退化为 `Nothing` XY 轴：Sweep 的 `SCRIPT` 原样透传，`LORA_NAMES` 为空。
+若扫描节点保留在工作流中但所有扫描行已关闭、未选择，或保存后目标根本不在 Power Loader 的
+配置行中，它会安全退化为 `Nothing` XY 轴：Sweep 的 `SCRIPT` 原样透传，`LORA_NAMES` 为空。
 因此可保留文件名/预览连线并正常生成基础单图，不会因被忽略的 XY 分支中断整个队列；日志会以
 `[XY-ED-V2] inactive` 或 `[ED-XY-PLOT] inactive` 说明原因。
 
@@ -38,8 +38,21 @@ LoRA 行，按节点行顺序省略目录和模型扩展名后以 ` + ` 连接�
 
 - 适合测试 `0.5 / 0.75 / 1.0` 等强度的实际效果。
 - 可用一个节点做 X、另一个节点做 Y，生成 4×4 等双 LoRA 对比。
-- 扫描目标需在 Power Loader 中**开启**；允许基础强度为 `0`。
+- 扫描目标可在 Power Loader 中开启，也可关闭但仍保留为该节点的一行；关闭时，Sweep 仅在
+  自己的计划栈中以 `0 / 0` 加入它，不改变 Power Loader 的普通模型输出。
 - `XY_LORA_PLAN` 是供 ED 采样器使用的内部计划输出，通常不需要连接。
+
+### Sweep 与关闭目标：执行规则
+
+| Power Loader 中的目标 | Sweep 行开关 | Sweep 输出 | `XY_AXIS → XY Plot → KSampler` | `SCRIPT → KSampler` | `LORA_NAMES` |
+|---|---|---|---|---|---|
+| 开启 | 开启 | 原始不可变堆栈中替换该行强度 | 正常生成带标签 XY 图表 | 正常执行单轴扫描并输出图像批次 | 目标名 |
+| **关闭，但仍是 Power Loader 的一行** | **开启** | 仅在 Sweep 计划栈追加该 LoRA 的 `0 / 0` 基线；每格再按 Start/End 覆盖 | **正常生成 XY 图表** | **正常执行单轴扫描** | 目标名 |
+| 任意 | 关闭、`None` 或未选择 | `Nothing` XY 轴；不建立扫描计划 | XY Plot 被视为无轴，KSampler 生成基础单图 | SCRIPT 原样透传，KSampler 生成基础单图 | 空文本 |
+| 不存在于 Power Loader 配置行（旧工作流残留） | 开启 | 安全跳过为 `Nothing` XY 轴，并打印 inactive 日志 | 基础单图，不报错 | 基础单图，不报错 | 空文本 |
+
+第二行是“关闭后仍要扫描”的推荐方式：Power Loader 保持关闭，Sweep 行保持开启并填写范围。
+这样普通流程不会加载该 LoRA；只有连接到该 Sweep 的图表或 SCRIPT 采样才加载它。
 
 ## 2. XY Input: LoRA Plot（旧版后叠加）
 

@@ -3512,29 +3512,41 @@ class EDLoraSweep:
             )
             return (dict(script or {}), None, ("Nothing", [""]), "")
 
-        # A Power Loader keeps switched-off rows outside its applied stack.
-        # Sweep must not turn a stale/disabled selection into a hard failure:
-        # discard it as an inactive row.  This is especially important when a
-        # workflow saves LORA_NAMES while intentionally bypassing XY sampling.
-        active_keys = {normalize_name(item[0]) for item in getattr(lora_pipe, "stack", [])}
-        available_rows = [row for row in rows if normalize_name(row[0]) in active_keys]
-        skipped_rows = [row[0] for row in rows if normalize_name(row[0]) not in active_keys]
+        # A switched-off Power Loader row is still a valid explicit Sweep
+        # target.  Expand it into a *plan-only* zero-strength row so both the
+        # direct SCRIPT route and XY Plot route can replace it per cell, while
+        # the ordinary Power Loader output stays unchanged.  Truly unknown
+        # stale names remain a safe no-op instead of a graph-wide exception.
+        available_keys = {
+            normalize_name(name) for name in getattr(lora_pipe, "available_loras", [])
+        }
+        resolved_rows = [row for row in rows if normalize_name(row[0]) in available_keys]
+        skipped_rows = [row[0] for row in rows if normalize_name(row[0]) not in available_keys]
         if skipped_rows:
             print(
-                f"[XY-ED-V2] inactive targets skipped (not enabled in Power Loader): "
+                f"[XY-ED-V2] inactive targets skipped (not a Power Loader row): "
                 f"{skipped_rows}"
             )
-        if not available_rows:
+        if not resolved_rows:
             print(
                 f"[XY-ED-V2] inactive axis={axis}: no scan targets remain; "
                 "passing through SCRIPT and emitting a Nothing XY axis"
             )
             return (dict(script or {}), None, ("Nothing", [""]), "")
-        rows = available_rows
+        plan_pipe, appended_targets = lora_pipe.with_disabled_sweep_targets(
+            [row[0] for row in resolved_rows]
+        )
+        if appended_targets:
+            print(
+                f"[XY-ED-V2] disabled Power Loader targets added to plan at 0/0: "
+                f"{appended_targets}; source_stack={lora_pipe.fingerprint}; "
+                f"plan_stack={plan_pipe.fingerprint}"
+            )
+        rows = resolved_rows
         values = generate_sweep_values(batch_count, 0.0, 1.0)
         axis_name, axis_direction, axis_mode = normalize_sweep_axis(axis)
         plan = EDLoraSweepPlan(
-            lora_pipe,
+            plan_pipe,
             [item[0] for item in rows],
             values,
             target_specs=rows,
@@ -3547,7 +3559,7 @@ class EDLoraSweep:
             f"[XY-ED-V2] plan targets={plan.target_names}, normalized_values={plan.values}, "
             f"axis_mode={axis_mode}, model_ranges={plan.model_ranges}, "
             f"clip_ranges={plan.clip_ranges}, resolved_values={resolved_values}, "
-            f"base_stack={lora_pipe.fingerprint}"
+            f"base_stack={plan_pipe.fingerprint}"
         )
         axis_type = "ED_LORA_SWEEP_X" if axis_direction == "X" else "ED_LORA_SWEEP_Y"
         axis = (axis_type, plan.axis_values())
